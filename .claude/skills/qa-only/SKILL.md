@@ -1,0 +1,1 @@
+/Users/isidropasman/Desktop/Zent/Proyectos/Agent-evals/agent-evals/.claude/skills/gstack/qa-only/SKILL.md
