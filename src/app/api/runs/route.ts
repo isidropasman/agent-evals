@@ -17,6 +17,7 @@ interface CreateRunBody {
   authHeaderName?: string;
   systemPrompt?: string;
   agentFamily?: "anthropic" | "openai" | "unknown";
+  mode?: "conversational" | "task";
   scenarioCount?: number;
   k?: number;
 }
@@ -81,6 +82,7 @@ export async function POST(req: Request) {
     connection,
     agentSystemPrompt: systemPrompt,
     agentFamily: body.agentFamily ?? "unknown",
+    mode: body.mode ?? "conversational",
     config,
   });
 

@@ -1,5 +1,10 @@
 export type ScenarioCategory = "happy_path" | "edge_case" | "adversarial";
 
+/** Conversational agents (chat/voice/support) are tested by simulating a user
+ * across turns. Task agents (invoice extraction, classification, transforms)
+ * are tested by feeding one input document and judging the single output. */
+export type EvalMode = "conversational" | "task";
+
 export interface Scenario {
   id: string;
   category: ScenarioCategory;
@@ -8,6 +13,8 @@ export interface Scenario {
   objective: string;
   successCriteria: string;
   maxTurns: number;
+  /** Task mode only: the input document/payload sent to the agent single-shot. */
+  input?: string;
 }
 
 export interface RubricItem {

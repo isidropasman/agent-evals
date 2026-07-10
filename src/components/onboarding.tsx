@@ -24,6 +24,7 @@ export function Onboarding() {
   const [authType, setAuthType] = useState<"none" | "bearer" | "header">("none");
   const [authToken, setAuthToken] = useState("");
   const [authHeaderName, setAuthHeaderName] = useState("");
+  const [mode, setMode] = useState<"conversational" | "task">("conversational");
   const [systemPrompt, setSystemPrompt] = useState("");
   const [agentFamily, setAgentFamily] = useState<"anthropic" | "openai" | "unknown">("unknown");
   const [scenarioCount, setScenarioCount] = useState(50);
@@ -98,6 +99,7 @@ export function Onboarding() {
           authHeaderName: authHeaderName || undefined,
           systemPrompt,
           agentFamily,
+          mode,
           scenarioCount,
           k,
         }),
@@ -138,11 +140,28 @@ export function Onboarding() {
 
       {step === 1 && (
         <div className="space-y-5">
+          <Field
+            label="Tipo de agente"
+            hint={
+              mode === "conversational"
+                ? "Chat, voz, soporte — simulamos usuarios en conversaciones multi-turno."
+                : "Procesa documentos (facturas, formularios) — le mandamos documentos de prueba y evaluamos la salida."
+            }
+          >
+            <Segmented
+              options={[
+                ["conversational", "Conversacional"],
+                ["task", "Procesamiento"],
+              ]}
+              value={mode}
+              onChange={(v) => setMode(v as "conversational" | "task")}
+            />
+          </Field>
           <Field label="Nombre del agente">
             <TextInput
               value={agentName}
               onChange={(e) => setAgentName(e.target.value)}
-              placeholder="Agente de voz — Cliente X"
+              placeholder={mode === "task" ? "Agente de facturas — Cliente X" : "Agente de voz — Cliente X"}
             />
           </Field>
           <Field label="Endpoint del agente" hint="OpenAI-compatible (/v1/chat/completions) o Coval ({sessionId, messages}).">
@@ -228,7 +247,11 @@ export function Onboarding() {
         <div className="space-y-5">
           <Field
             label="System prompt del agente"
-            hint="Requerido: de acá salen los escenarios, la rúbrica y los fixes."
+            hint={
+              mode === "task"
+                ? "Requerido: de acá generamos los documentos de prueba, la rúbrica y los fixes."
+                : "Requerido: de acá salen los escenarios, la rúbrica y los fixes."
+            }
           >
             <TextArea
               rows={8}

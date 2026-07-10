@@ -1,11 +1,13 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import type { AgentConnection } from "../engine/connector";
-import type { EngineResult, ScenarioCategory } from "../engine/types";
+import type { EngineResult, EvalMode, ScenarioCategory } from "../engine/types";
 
 export interface GauntletConfig {
   agentName: string;
   clientName?: string;
+  /** "conversational" (chat/voice) or "task" (document/transform agents). */
+  mode?: EvalMode;
   /** Path (relative to the config file) to read the agent's system prompt from. */
   systemPromptFile?: string;
   /** Inline system prompt — takes precedence over systemPromptFile. */
@@ -36,6 +38,7 @@ export interface GauntletConfig {
 export interface ResolvedRun {
   agentName: string;
   clientName: string | null;
+  mode: EvalMode;
   systemPrompt: string;
   connection: AgentConnection;
   agentFamily: "anthropic" | "openai" | "unknown";
@@ -52,6 +55,7 @@ export const CONFIG_FILENAME = "gauntlet.config.json";
 export function configTemplate(): string {
   const tpl: GauntletConfig = {
     agentName: "Mi agente",
+    mode: "conversational",
     systemPromptFile: "./prompt.txt",
     endpointUrl: "http://localhost:8080/v1/chat/completions",
     protocol: "openai",
@@ -113,6 +117,7 @@ export function loadConfig(configPath: string): EngineResult<ResolvedRun> {
     value: {
       agentName: cfg.agentName.trim(),
       clientName: cfg.clientName?.trim() || null,
+      mode: cfg.mode ?? "conversational",
       systemPrompt,
       connection,
       agentFamily: cfg.agentFamily ?? "unknown",

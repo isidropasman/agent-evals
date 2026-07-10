@@ -3,12 +3,14 @@ import { judgeConversation } from "./judge";
 import { proposeFixes } from "./fixer";
 import { AnthropicProvider, MODELS, type LlmProvider } from "./provider";
 import { generateRubric, generateScenarios } from "./scenarios";
+import { generateTaskCases, executeTask } from "./tasks";
 import { simulateConversation } from "./simulator";
 import {
   DEFAULT_RUN_CONFIG,
   type CategoryScore,
   type ConversationResult,
   type EngineResult,
+  type EvalMode,
   type RunConfig,
   type RunProgress,
   type RunReport,
@@ -23,6 +25,8 @@ export interface RunInput {
   config?: Partial<RunConfig>;
   /** Detected family of the agent under test, to pick a cross-family judge. */
   agentFamily?: "anthropic" | "openai" | "unknown";
+  /** conversational (chat/voice) simulates a user; task feeds one document. */
+  mode?: EvalMode;
   onProgress?: (p: RunProgress) => void;
   /** Aborts the run at the next job boundary. */
   signal?: AbortSignal;
@@ -99,6 +103,7 @@ export async function runEval(
   const config: RunConfig = { ...DEFAULT_RUN_CONFIG, ...input.config };
   const emit = input.onProgress ?? (() => {});
   const signal = input.signal;
+  const mode: EvalMode = input.mode ?? "conversational";
   const totalConversations =
     (config.mix.happy_path + config.mix.edge_case + config.mix.adversarial) *
     config.k;
@@ -119,16 +124,26 @@ export async function runEval(
     phase: "generating",
     completedConversations: 0,
     totalConversations,
-    message: "Generando escenarios y rúbrica",
+    message:
+      mode === "task"
+        ? "Generando documentos de prueba y rúbrica"
+        : "Generando escenarios y rúbrica",
   });
 
   const [scenariosResult, rubricResult] = await Promise.all([
-    generateScenarios(
-      providers.scenarioGen,
-      MODELS.scenarioGen,
-      input.agentSystemPrompt,
-      config,
-    ),
+    mode === "task"
+      ? generateTaskCases(
+          providers.scenarioGen,
+          MODELS.scenarioGen,
+          input.agentSystemPrompt,
+          config,
+        )
+      : generateScenarios(
+          providers.scenarioGen,
+          MODELS.scenarioGen,
+          input.agentSystemPrompt,
+          config,
+        ),
     generateRubric(providers.judge, MODELS.judge, input.agentSystemPrompt),
   ]);
   if (!scenariosResult.ok) return scenariosResult;
@@ -154,19 +169,25 @@ export async function runEval(
     phase: "simulating",
     completedConversations: 0,
     totalConversations,
-    message: `Simulando ${scenarios.length} escenarios × k=${config.k}`,
+    message:
+      mode === "task"
+        ? `Procesando ${scenarios.length} documentos × k=${config.k}`
+        : `Simulando ${scenarios.length} escenarios × k=${config.k}`,
   });
 
   const conversationResults = await pool(
     jobs.map((job) => async (): Promise<ConversationResult> => {
       const sessionId = `${job.scenario.id}-a${job.attempt}`;
-      const sim = await simulateConversation(
-        providers.userSim,
-        MODELS.userSim,
-        input.connection,
-        job.scenario,
-        sessionId,
-      );
+      const sim =
+        mode === "task"
+          ? await executeTask(input.connection, job.scenario, sessionId)
+          : await simulateConversation(
+              providers.userSim,
+              MODELS.userSim,
+              input.connection,
+              job.scenario,
+              sessionId,
+            );
       if (!sim.ok) {
         completed++;
         emit({

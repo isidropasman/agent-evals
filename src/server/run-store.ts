@@ -1,6 +1,6 @@
 import type { AgentConnection } from "@/engine/connector";
 import { defaultProviders, RunAbortedError, runEval } from "@/engine/runner";
-import type { RunConfig } from "@/engine/types";
+import type { EvalMode, RunConfig } from "@/engine/types";
 import { completeRun, createRun, failRun, updateProgress } from "./db";
 
 export interface StartRunInput {
@@ -9,6 +9,7 @@ export interface StartRunInput {
   connection: AgentConnection;
   agentSystemPrompt: string;
   agentFamily: "anthropic" | "openai" | "unknown";
+  mode: EvalMode;
   config?: Partial<RunConfig>;
 }
 
@@ -44,6 +45,7 @@ export function startRun(id: string, input: StartRunInput): void {
       connection: input.connection,
       agentSystemPrompt: input.agentSystemPrompt,
       agentFamily: input.agentFamily,
+      mode: input.mode,
       config: input.config,
       signal: controller.signal,
       onProgress: (p) => updateProgress(id, p),
