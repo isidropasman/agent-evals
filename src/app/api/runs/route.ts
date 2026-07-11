@@ -17,7 +17,9 @@ interface CreateRunBody {
   authHeaderName?: string;
   systemPrompt?: string;
   agentFamily?: "anthropic" | "openai" | "unknown";
-  mode?: "conversational" | "task";
+  /** "auto" (or omitted) lets Gauntlet's profiler infer the mode from the
+   * system prompt; "conversational"/"task" forces it. */
+  mode?: "auto" | "conversational" | "task";
   scenarioCount?: number;
   k?: number;
 }
@@ -82,7 +84,8 @@ export async function POST(req: Request) {
     connection,
     agentSystemPrompt: systemPrompt,
     agentFamily: body.agentFamily ?? "unknown",
-    mode: body.mode ?? "conversational",
+    // "auto"/omitted → don't pass a mode at all, so the engine's profiler infers it.
+    mode: body.mode && body.mode !== "auto" ? body.mode : undefined,
     config,
   });
 

@@ -2,6 +2,7 @@ import { sendToAgent, type AgentConnection } from "./connector";
 import type { LlmProvider } from "./provider";
 import { extractJson } from "./json";
 import type {
+  AgentProfile,
   EngineResult,
   RunConfig,
   Scenario,
@@ -45,6 +46,21 @@ interface RawCase {
   expected: string;
 }
 
+/** Same purpose as scenarios.ts's profileGuidance — render agent-specific
+ * findings into the document-generation prompt instead of generic guidance. */
+function profileGuidance(profile: AgentProfile | undefined, category: ScenarioCategory): string {
+  if (!profile || profile.capabilities.length === 0) return "";
+  const lines: string[] = [
+    `Dominio: ${profile.domain}. Capacidades esperadas: ${profile.capabilities.join("; ")}.`,
+    `Límites que el agente debe respetar: ${profile.boundaries.join("; ")}.`,
+  ];
+  if (category === "adversarial") {
+    lines.push(`Ángulos de ataque específicos del dominio a explotar: ${profile.riskAreas.join("; ")}.`);
+  }
+  lines.push(`Modos de falla conocidos de ESTE agente a sondear: ${profile.failureModes.join("; ")}.`);
+  return "\n" + lines.join("\n");
+}
+
 /**
  * Generate task test cases from the agent's system prompt. Each case is an input
  * document plus a description of the correct output/behavior. The document goes
@@ -56,6 +72,7 @@ export async function generateTaskCases(
   model: string,
   agentSystemPrompt: string,
   config: RunConfig,
+  profile?: AgentProfile,
 ): Promise<EngineResult<Scenario[]>> {
   const scenarios: Scenario[] = [];
   const categories: ScenarioCategory[] = ["happy_path", "edge_case", "adversarial"];
@@ -74,6 +91,7 @@ ${agentSystemPrompt}
 
 Generá exactamente ${count} casos de prueba de categoría "${category}".
 Categoría: ${CATEGORY_GUIDANCE[category]}
+${profileGuidance(profile, category)}
 
 Cada caso necesita:
 - title: etiqueta corta

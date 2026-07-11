@@ -74,6 +74,36 @@ export interface RunReport {
   judgeModel: string;
   judgeFamilyDisclaimer: string | null;
   totals: { scenarios: number; passed: number; conversations: number };
+  /** What Gauntlet understood about the agent before designing the test plan. */
+  profile: AgentProfile;
+}
+
+/**
+ * What Gauntlet understood about the agent before designing any tests. Instead
+ * of the user picking a mode and Gauntlet running one of two fixed templates,
+ * the profiler reads the system prompt and derives the agent's actual shape —
+ * its input/output surface, what it's supposed to do, what it must refuse, and
+ * the failure modes specific to THIS agent (not a generic checklist). Scenario
+ * and task generation then target those specifics.
+ */
+export interface AgentProfile {
+  /** One paragraph: what this agent is and does, in plain language. */
+  summary: string;
+  /** Inferred testing mode. */
+  mode: EvalMode;
+  modeConfidence: "high" | "medium" | "low";
+  /** Why the profiler picked that mode — auditable, not a black box. */
+  modeRationale: string;
+  /** The domain/vertical, e.g. "invoice processing", "SaaS billing support". */
+  domain: string;
+  /** What the agent is supposed to be able to do. */
+  capabilities: string[];
+  /** What the agent must refuse or stay out of — scope boundaries. */
+  boundaries: string[];
+  /** Agent-SPECIFIC ways this could break in production. */
+  failureModes: string[];
+  /** Domain-specific adversarial angles worth targeting. */
+  riskAreas: string[];
 }
 
 export interface RunConfig {

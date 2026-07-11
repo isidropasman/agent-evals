@@ -116,6 +116,7 @@ export class MockProvider implements LlmProvider {
 }
 
 export const MODELS = {
+  profiler: "claude-sonnet-5",
   scenarioGen: "claude-sonnet-5",
   userSim: "claude-haiku-4-5",
   judge: "claude-sonnet-5",

@@ -6,7 +6,8 @@ import type { EngineResult, EvalMode, ScenarioCategory } from "../engine/types";
 export interface GauntletConfig {
   agentName: string;
   clientName?: string;
-  /** "conversational" (chat/voice) or "task" (document/transform agents). */
+  /** "conversational" (chat/voice) or "task" (document/transform agents).
+   * Omit to let Gauntlet's profiler read the system prompt and decide. */
   mode?: EvalMode;
   /** Path (relative to the config file) to read the agent's system prompt from. */
   systemPromptFile?: string;
@@ -38,7 +39,8 @@ export interface GauntletConfig {
 export interface ResolvedRun {
   agentName: string;
   clientName: string | null;
-  mode: EvalMode;
+  /** undefined = let the engine's profiler infer the mode from the prompt. */
+  mode: EvalMode | undefined;
   systemPrompt: string;
   connection: AgentConnection;
   agentFamily: "anthropic" | "openai" | "unknown";
@@ -55,7 +57,8 @@ export const CONFIG_FILENAME = "gauntlet.config.json";
 export function configTemplate(): string {
   const tpl: GauntletConfig = {
     agentName: "Mi agente",
-    mode: "conversational",
+    // mode: "conversational" | "task" — omitido a propósito: Gauntlet lee el
+    // system prompt y decide. Fijalo solo si querés forzar uno de los dos.
     systemPromptFile: "./prompt.txt",
     endpointUrl: "http://localhost:8080/v1/chat/completions",
     protocol: "openai",
@@ -117,7 +120,7 @@ export function loadConfig(configPath: string): EngineResult<ResolvedRun> {
     value: {
       agentName: cfg.agentName.trim(),
       clientName: cfg.clientName?.trim() || null,
-      mode: cfg.mode ?? "conversational",
+      mode: cfg.mode,
       systemPrompt,
       connection,
       agentFamily: cfg.agentFamily ?? "unknown",

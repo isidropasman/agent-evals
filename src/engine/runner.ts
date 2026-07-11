@@ -2,11 +2,13 @@ import { probeAgent, type AgentConnection } from "./connector";
 import { judgeConversation } from "./judge";
 import { proposeFixes } from "./fixer";
 import { AnthropicProvider, MODELS, type LlmProvider } from "./provider";
+import { profileAgent } from "./profiler";
 import { generateRubric, generateScenarios } from "./scenarios";
 import { generateTaskCases, executeTask } from "./tasks";
 import { simulateConversation } from "./simulator";
 import {
   DEFAULT_RUN_CONFIG,
+  type AgentProfile,
   type CategoryScore,
   type ConversationResult,
   type EngineResult,
@@ -25,7 +27,8 @@ export interface RunInput {
   config?: Partial<RunConfig>;
   /** Detected family of the agent under test, to pick a cross-family judge. */
   agentFamily?: "anthropic" | "openai" | "unknown";
-  /** conversational (chat/voice) simulates a user; task feeds one document. */
+  /** Force a mode instead of letting the profiler infer it from the system
+   * prompt. Omit this to have Gauntlet understand the agent and decide. */
   mode?: EvalMode;
   onProgress?: (p: RunProgress) => void;
   /** Aborts the run at the next job boundary. */
@@ -33,11 +36,30 @@ export interface RunInput {
 }
 
 export interface Providers {
+  profiler: LlmProvider;
   scenarioGen: LlmProvider;
   userSim: LlmProvider;
   judge: LlmProvider;
   fixer: LlmProvider;
   judgeModel: string;
+}
+
+/** Used when the profiler call itself fails — profiling is a quality
+ * enhancement, not a hard dependency. The run still proceeds with the
+ * caller's requested mode (or the historical conversational default) and
+ * generic category guidance instead of agent-specific findings. */
+function fallbackProfile(mode: EvalMode, reason: string): AgentProfile {
+  return {
+    summary: "Perfil no disponible — el análisis del agente falló.",
+    mode,
+    modeConfidence: "low",
+    modeRationale: `No se pudo perfilar el agente (${reason}). Se usó el modo solicitado.`,
+    domain: "desconocido",
+    capabilities: [],
+    boundaries: [],
+    failureModes: [],
+    riskAreas: [],
+  };
 }
 
 export class RunAbortedError extends Error {
@@ -88,6 +110,7 @@ function pickJudge(agentFamily: "anthropic" | "openai" | "unknown"): {
 export function defaultProviders(apiKey?: string): Providers {
   const anthropic = new AnthropicProvider(apiKey);
   return {
+    profiler: anthropic,
     scenarioGen: anthropic,
     userSim: anthropic,
     judge: anthropic,
@@ -103,7 +126,6 @@ export async function runEval(
   const config: RunConfig = { ...DEFAULT_RUN_CONFIG, ...input.config };
   const emit = input.onProgress ?? (() => {});
   const signal = input.signal;
-  const mode: EvalMode = input.mode ?? "conversational";
   const totalConversations =
     (config.mix.happy_path + config.mix.edge_case + config.mix.adversarial) *
     config.k;
@@ -119,6 +141,29 @@ export async function runEval(
   });
   const probe = await probeAgent(input.connection);
   if (!probe.ok) return probe;
+
+  // Understand the agent before designing any tests: what it does, its
+  // input/output shape, what it must refuse, and ITS specific failure modes —
+  // instead of the caller picking one of two fixed templates. If profiling
+  // fails, degrade to the caller's requested mode (or the historical
+  // conversational default) with generic category guidance; profiling is a
+  // quality enhancement, not a hard dependency for the run to proceed.
+  emit({
+    phase: "generating",
+    completedConversations: 0,
+    totalConversations,
+    message: "Entendiendo qué hace el agente",
+  });
+  const profileResult = await profileAgent(
+    providers.profiler,
+    MODELS.profiler,
+    input.agentSystemPrompt,
+  );
+  const profile: AgentProfile = profileResult.ok
+    ? profileResult.value
+    : fallbackProfile(input.mode ?? "conversational", profileResult.error.message);
+  // input.mode is an explicit override; omitting it lets the profiler decide.
+  const mode: EvalMode = input.mode ?? profile.mode;
 
   emit({
     phase: "generating",
@@ -137,14 +182,16 @@ export async function runEval(
           MODELS.scenarioGen,
           input.agentSystemPrompt,
           config,
+          profile,
         )
       : generateScenarios(
           providers.scenarioGen,
           MODELS.scenarioGen,
           input.agentSystemPrompt,
           config,
+          profile,
         ),
-    generateRubric(providers.judge, MODELS.judge, input.agentSystemPrompt),
+    generateRubric(providers.judge, MODELS.judge, input.agentSystemPrompt, profile),
   ]);
   if (!scenariosResult.ok) return scenariosResult;
   if (!rubricResult.ok) return rubricResult;
@@ -296,6 +343,7 @@ export async function runEval(
       passed: passedScenarios,
       conversations: totalConversations,
     },
+    profile,
   };
 
   emit({

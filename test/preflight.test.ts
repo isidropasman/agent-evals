@@ -53,6 +53,7 @@ describe("runEval preflight + cancel", () => {
     }) as typeof fetch;
 
     const providers: Providers = {
+      profiler: new MockProvider([() => "{}"]),
       scenarioGen: new MockProvider([() => "{}"]),
       userSim: new MockProvider([() => "{}"]),
       judge: new MockProvider([() => "{}"]),
@@ -79,6 +80,7 @@ describe("runEval preflight + cancel", () => {
     controller.abort(); // pre-aborted → pool throws at first job
 
     const providers: Providers = {
+      profiler: new MockProvider([]),
       scenarioGen: new MockProvider([
         (req) =>
           req.system.includes("design test scenarios")

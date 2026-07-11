@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import type {
+  AgentProfile,
   RunProgress,
   RunReport,
   ScenarioCategory,
@@ -230,6 +231,8 @@ function ResultsView({
         </div>
       </div>
 
+      <AgentProfileCard profile={report.profile} />
+
       {report.judgeFamilyDisclaimer && (
         <p className="mt-4 text-xs" style={{ color: "var(--color-warn)" }}>
           ⚠ {report.judgeFamilyDisclaimer}
@@ -281,6 +284,104 @@ function ResultsView({
 
       {/* failure explorer */}
       <FailureExplorer results={report.scenarioResults} />
+    </div>
+  );
+}
+
+const CONFIDENCE_COLOR: Record<AgentProfile["modeConfidence"], string> = {
+  high: "var(--color-signal)",
+  medium: "var(--color-warn)",
+  low: "var(--color-fail)",
+};
+
+const MODE_LABEL: Record<AgentProfile["mode"], string> = {
+  conversational: "Conversacional",
+  task: "Procesamiento",
+};
+
+/** "Lo que entendí de tu agente" — surfaces the profiler's inference so the
+ * test plan isn't a black box: why this mode, what it's supposed to do, what
+ * it must refuse, and the failure modes the run specifically targeted. */
+function AgentProfileCard({ profile }: { profile: AgentProfile }) {
+  const [open, setOpen] = useState(false);
+  const isFallback = profile.capabilities.length === 0;
+
+  return (
+    <section className="mt-10">
+      <Panel className="relative overflow-hidden">
+        <Corner />
+        <button
+          onClick={() => setOpen(!open)}
+          className="flex w-full items-center justify-between gap-4 p-6 text-left"
+        >
+          <div>
+            <div className="label mb-2">Lo que entendí de tu agente</div>
+            <p className="text-sm leading-relaxed" style={{ color: "var(--color-ink-dim)" }}>
+              {profile.summary}
+            </p>
+          </div>
+          <div className="flex shrink-0 items-center gap-3">
+            <span
+              className="px-2.5 py-1 text-xs font-bold uppercase tracking-widest"
+              style={{ background: CONFIDENCE_COLOR[profile.modeConfidence], color: "var(--color-void)" }}
+            >
+              {MODE_LABEL[profile.mode]}
+            </span>
+            <span style={{ color: "var(--color-ink-faint)" }}>{open ? "−" : "+"}</span>
+          </div>
+        </button>
+
+        {open && (
+          <div className="border-t p-6" style={{ borderColor: "var(--color-line)" }}>
+            {isFallback ? (
+              <p className="text-xs" style={{ color: "var(--color-warn)" }}>
+                ⚠ {profile.modeRationale}
+              </p>
+            ) : (
+              <>
+                <div className="mb-5 grid grid-cols-1 gap-3 text-xs md:grid-cols-2">
+                  <Kv k="Dominio" v={profile.domain} />
+                  <Kv
+                    k="Por qué este modo"
+                    v={profile.modeRationale}
+                  />
+                </div>
+                <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+                  <ProfileList title="Capacidades esperadas" items={profile.capabilities} />
+                  <ProfileList title="Límites / debe rechazar" items={profile.boundaries} />
+                  <ProfileList title="Modos de falla sondeados" items={profile.failureModes} tone="fail" />
+                  <ProfileList title="Ángulos adversariales" items={profile.riskAreas} tone="fail" />
+                </div>
+              </>
+            )}
+          </div>
+        )}
+      </Panel>
+    </section>
+  );
+}
+
+function ProfileList({
+  title,
+  items,
+  tone,
+}: {
+  title: string;
+  items: string[];
+  tone?: "fail";
+}) {
+  if (items.length === 0) return null;
+  return (
+    <div>
+      <div className="label mb-2 normal-case tracking-normal">{title}</div>
+      <ul className="space-y-1.5">
+        {items.map((item, i) => (
+          <li key={i} className="flex gap-2 text-xs leading-relaxed" style={{ color: "var(--color-ink-dim)" }}>
+            <span style={{ color: tone === "fail" ? "var(--color-fail)" : "var(--color-signal-deep)" }}>▸</span>
+            {item}
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }

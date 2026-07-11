@@ -92,6 +92,7 @@ describe("runEval in task mode", () => {
       )) as typeof fetch;
 
     const providers: Providers = {
+      profiler: new MockProvider([]),
       scenarioGen: new MockProvider([
         (req) =>
           req.system.includes("procesan documentos")

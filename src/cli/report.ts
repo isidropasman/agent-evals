@@ -17,6 +17,24 @@ const c = {
   amber: "\x1b[38;5;215m",
 };
 
+/** Simple greedy word-wrap so the profile summary doesn't run off a narrow
+ * terminal — joined with a newline + indent matching the caller's prefix. */
+function wrap(text: string, width: number): string {
+  const words = text.split(/\s+/);
+  const lines: string[] = [];
+  let current = "";
+  for (const word of words) {
+    if (current && (current + " " + word).length > width) {
+      lines.push(current);
+      current = word;
+    } else {
+      current = current ? `${current} ${word}` : word;
+    }
+  }
+  if (current) lines.push(current);
+  return lines.join("\n  ");
+}
+
 function bar(rate: number, width = 20): string {
   const filled = Math.round(rate * width);
   return "█".repeat(filled) + "░".repeat(width - filled);
@@ -45,6 +63,20 @@ export function renderReport(report: RunReport, run: ResolvedRun): string {
   lines.push("");
   lines.push(`${c.bold}  GAUNTLET${c.reset}${c.dim} · ${run.agentName}${c.reset}`);
   lines.push(`  ${c.dim}${"─".repeat(48)}${c.reset}`);
+
+  const profile = report.profile;
+  const modeLabel = profile.mode === "task" ? "Procesamiento" : "Conversacional";
+  const isFallback = profile.capabilities.length === 0;
+  lines.push(
+    `  ${c.dim}Entendido como:${c.reset} ${c.bold}${modeLabel}${c.reset} ${c.dim}(confianza: ${profile.modeConfidence})${c.reset}`,
+  );
+  if (!isFallback) {
+    lines.push(`  ${c.dim}${wrap(profile.summary, 78)}${c.reset}`);
+  } else {
+    lines.push(`  ${c.amber}⚠ ${profile.modeRationale}${c.reset}`);
+  }
+  lines.push("");
+
   lines.push(
     `  ${verdictColor}${c.bold}${scorePct}/100${c.reset}  ${verdictColor}${passed ? "PASA EL GATE" : "NO PASA"}${c.reset}` +
       `   ${c.dim}${report.totals.passed}/${report.totals.scenarios} escenarios · ${report.totals.conversations} conversaciones · pass^${run.k}${c.reset}`,

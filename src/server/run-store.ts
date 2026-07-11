@@ -9,7 +9,8 @@ export interface StartRunInput {
   connection: AgentConnection;
   agentSystemPrompt: string;
   agentFamily: "anthropic" | "openai" | "unknown";
-  mode: EvalMode;
+  /** Force a mode; omit to let the profiler infer it from the system prompt. */
+  mode?: EvalMode;
   config?: Partial<RunConfig>;
 }
 

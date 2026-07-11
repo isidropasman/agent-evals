@@ -24,7 +24,7 @@ export function Onboarding() {
   const [authType, setAuthType] = useState<"none" | "bearer" | "header">("none");
   const [authToken, setAuthToken] = useState("");
   const [authHeaderName, setAuthHeaderName] = useState("");
-  const [mode, setMode] = useState<"conversational" | "task">("conversational");
+  const [mode, setMode] = useState<"auto" | "conversational" | "task">("auto");
   const [systemPrompt, setSystemPrompt] = useState("");
   const [agentFamily, setAgentFamily] = useState<"anthropic" | "openai" | "unknown">("unknown");
   const [scenarioCount, setScenarioCount] = useState(50);
@@ -143,18 +143,21 @@ export function Onboarding() {
           <Field
             label="Tipo de agente"
             hint={
-              mode === "conversational"
-                ? "Chat, voz, soporte — simulamos usuarios en conversaciones multi-turno."
-                : "Procesa documentos (facturas, formularios) — le mandamos documentos de prueba y evaluamos la salida."
+              mode === "auto"
+                ? "Recomendado: Gauntlet lee tu system prompt y decide solo si es conversacional o de procesamiento."
+                : mode === "conversational"
+                  ? "Forzado: chat, voz, soporte — simulamos usuarios en conversaciones multi-turno."
+                  : "Forzado: procesa documentos (facturas, formularios) — le mandamos documentos de prueba y evaluamos la salida."
             }
           >
             <Segmented
               options={[
+                ["auto", "Auto"],
                 ["conversational", "Conversacional"],
                 ["task", "Procesamiento"],
               ]}
               value={mode}
-              onChange={(v) => setMode(v as "conversational" | "task")}
+              onChange={(v) => setMode(v as "auto" | "conversational" | "task")}
             />
           </Field>
           <Field label="Nombre del agente">

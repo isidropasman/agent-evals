@@ -98,6 +98,17 @@ describe("passesGate", () => {
       judgeModel: "m",
       judgeFamilyDisclaimer: null,
       totals: { scenarios: 30, passed: 0, conversations: 120 },
+      profile: {
+        summary: "test",
+        mode: "conversational",
+        modeConfidence: "high",
+        modeRationale: "test",
+        domain: "test",
+        capabilities: [],
+        boundaries: [],
+        failureModes: [],
+        riskAreas: [],
+      },
     };
   }
 
