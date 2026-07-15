@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
 import type { AgentConnection } from "@/engine/connector";
 import { assertAllowedUrl } from "@/engine/ssrf";
+import type { ToolDefinition } from "@/engine/types";
 import { listRuns } from "@/server/db";
 import { startRun } from "@/server/run-store";
 
@@ -20,8 +21,30 @@ interface CreateRunBody {
   /** "auto" (or omitted) lets Gauntlet's profiler infer the mode from the
    * system prompt; "conversational"/"task" forces it. */
   mode?: "auto" | "conversational" | "task";
+  /** Tools the agent can call (OpenAI tools[] shape) — optional. */
+  tools?: unknown;
   scenarioCount?: number;
   k?: number;
+}
+
+/** Loose validation: each entry needs a name + description; parameters is
+ * passed through as-is (it's only ever used as LLM context, never executed). */
+function parseTools(raw: unknown): ToolDefinition[] | null {
+  if (raw === undefined || raw === null) return [];
+  if (!Array.isArray(raw)) return null;
+  const tools: ToolDefinition[] = [];
+  for (const item of raw as Record<string, unknown>[]) {
+    if (typeof item?.name !== "string" || typeof item?.description !== "string") return null;
+    tools.push({
+      name: item.name,
+      description: item.description,
+      parameters:
+        typeof item.parameters === "object" && item.parameters !== null
+          ? (item.parameters as Record<string, unknown>)
+          : undefined,
+    });
+  }
+  return tools;
 }
 
 export async function GET() {
@@ -61,6 +84,14 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: urlCheck.error.message }, { status: 400 });
   }
 
+  const tools = parseTools(body.tools);
+  if (tools === null) {
+    return NextResponse.json(
+      { error: "tools debe ser un array de {name, description, parameters?}" },
+      { status: 400 },
+    );
+  }
+
   const connection: AgentConnection = {
     endpointUrl,
     protocol: body.protocol ?? "openai",
@@ -86,6 +117,7 @@ export async function POST(req: Request) {
     agentFamily: body.agentFamily ?? "unknown",
     // "auto"/omitted → don't pass a mode at all, so the engine's profiler infers it.
     mode: body.mode && body.mode !== "auto" ? body.mode : undefined,
+    tools,
     config,
   });
 

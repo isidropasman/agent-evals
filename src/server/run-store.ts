@@ -1,6 +1,6 @@
 import type { AgentConnection } from "@/engine/connector";
 import { defaultProviders, RunAbortedError, runEval } from "@/engine/runner";
-import type { EvalMode, RunConfig } from "@/engine/types";
+import type { EvalMode, RunConfig, ToolDefinition } from "@/engine/types";
 import { completeRun, createRun, failRun, updateProgress } from "./db";
 
 export interface StartRunInput {
@@ -11,6 +11,8 @@ export interface StartRunInput {
   agentFamily: "anthropic" | "openai" | "unknown";
   /** Force a mode; omit to let the profiler infer it from the system prompt. */
   mode?: EvalMode;
+  /** Tools the agent can call, if any — Gauntlet mocks their results. */
+  tools?: ToolDefinition[];
   config?: Partial<RunConfig>;
 }
 
@@ -47,6 +49,7 @@ export function startRun(id: string, input: StartRunInput): void {
       agentSystemPrompt: input.agentSystemPrompt,
       agentFamily: input.agentFamily,
       mode: input.mode,
+      tools: input.tools,
       config: input.config,
       signal: controller.signal,
       onProgress: (p) => updateProgress(id, p),

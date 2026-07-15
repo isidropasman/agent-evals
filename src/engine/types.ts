@@ -27,8 +27,22 @@ export interface Rubric {
 }
 
 export interface Turn {
-  role: "user" | "assistant";
+  /** "tool" covers both a tool call request and its result — folded into one
+   * role because both are "not the user, not really the assistant's own
+   * words"; the direction (→ call / ← result) is encoded in `content`. */
+  role: "user" | "assistant" | "tool";
   content: string;
+}
+
+/** A tool the agent under test can call, declared by the user (OpenAI
+ * tools[] shape) so Gauntlet can mock plausible results without owning the
+ * agent's real implementation. */
+export interface ToolDefinition {
+  name: string;
+  description: string;
+  /** JSON schema for the tool's arguments — passed through to the mocker as
+   * context, not validated. */
+  parameters?: Record<string, unknown>;
 }
 
 export interface Verdict {
@@ -104,6 +118,10 @@ export interface AgentProfile {
   failureModes: string[];
   /** Domain-specific adversarial angles worth targeting. */
   riskAreas: string[];
+  /** Tool/function names the profiler believes this agent has access to,
+   * inferred from the prompt and/or the user-declared tool list. Empty if
+   * the agent doesn't appear to use tools. */
+  toolsDetected: string[];
 }
 
 export interface RunConfig {
@@ -113,6 +131,10 @@ export interface RunConfig {
   weights: Record<ScenarioCategory, number>;
   maxTurns: number;
   concurrency: number;
+  /** Safety cap on tool-call rounds within a single turn — an agent that
+   * keeps calling tools without ever answering is itself a failure mode
+   * (infinite tool loop), not a bug in Gauntlet. */
+  maxToolCallsPerTurn: number;
 }
 
 export const DEFAULT_RUN_CONFIG: RunConfig = {
@@ -122,6 +144,7 @@ export const DEFAULT_RUN_CONFIG: RunConfig = {
   weights: { happy_path: 0.4, edge_case: 0.3, adversarial: 0.3 },
   maxTurns: 8,
   concurrency: 10,
+  maxToolCallsPerTurn: 6,
 };
 
 export type EngineResult<T> =
@@ -135,7 +158,8 @@ export interface EngineError {
     | "provider_error"
     | "provider_rate_limited"
     | "parse_error"
-    | "config_error";
+    | "config_error"
+    | "tool_loop_exceeded";
   message: string;
 }
 

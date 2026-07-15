@@ -54,6 +54,7 @@ describe("runEval preflight + cancel", () => {
 
     const providers: Providers = {
       profiler: new MockProvider([() => "{}"]),
+      toolMocker: new MockProvider([]),
       scenarioGen: new MockProvider([() => "{}"]),
       userSim: new MockProvider([() => "{}"]),
       judge: new MockProvider([() => "{}"]),
@@ -81,6 +82,7 @@ describe("runEval preflight + cancel", () => {
 
     const providers: Providers = {
       profiler: new MockProvider([]),
+      toolMocker: new MockProvider([]),
       scenarioGen: new MockProvider([
         (req) =>
           req.system.includes("design test scenarios")

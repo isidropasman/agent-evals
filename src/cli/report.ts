@@ -72,6 +72,9 @@ export function renderReport(report: RunReport, run: ResolvedRun): string {
   );
   if (!isFallback) {
     lines.push(`  ${c.dim}${wrap(profile.summary, 78)}${c.reset}`);
+    if (profile.toolsDetected.length > 0) {
+      lines.push(`  ${c.dim}Tools detectadas: ${profile.toolsDetected.join(", ")}${c.reset}`);
+    }
   } else {
     lines.push(`  ${c.amber}⚠ ${profile.modeRationale}${c.reset}`);
   }

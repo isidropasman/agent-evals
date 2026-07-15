@@ -111,6 +111,7 @@ describe("runEval full pipeline (mock)", () => {
 
       const providers: Providers = {
         profiler: new MockProvider([]), // no handler → degrades to fallback profile
+        toolMocker: new MockProvider([]),
         scenarioGen,
         userSim,
         judge: rubricProvider,
@@ -167,6 +168,7 @@ describe("runEval full pipeline (mock)", () => {
     try {
       const providers: Providers = {
         profiler: new MockProvider([]),
+        toolMocker: new MockProvider([]),
         scenarioGen: new MockProvider([
           (req) =>
             req.system.includes("design test scenarios")

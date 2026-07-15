@@ -108,6 +108,7 @@ describe("passesGate", () => {
         boundaries: [],
         failureModes: [],
         riskAreas: [],
+        toolsDetected: [],
       },
     };
   }

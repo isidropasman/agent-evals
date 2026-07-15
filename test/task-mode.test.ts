@@ -34,6 +34,7 @@ describe("generateTaskCases", () => {
       weights: { happy_path: 0.4, edge_case: 0.3, adversarial: 0.3 },
       maxTurns: 1,
       concurrency: 1,
+      maxToolCallsPerTurn: 6,
     });
     expect(r.ok).toBe(true);
     if (r.ok) {
@@ -72,6 +73,10 @@ describe("executeTask", () => {
         input: "Factura #1 Total: $100",
       },
       "s1",
+      [],
+      new MockProvider([]),
+      "m",
+      6,
     );
     expect(r.ok).toBe(true);
     if (r.ok) {
@@ -93,6 +98,7 @@ describe("runEval in task mode", () => {
 
     const providers: Providers = {
       profiler: new MockProvider([]),
+      toolMocker: new MockProvider([]),
       scenarioGen: new MockProvider([
         (req) =>
           req.system.includes("procesan documentos")

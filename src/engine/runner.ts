@@ -19,6 +19,7 @@ import {
   type Scenario,
   type ScenarioCategory,
   type ScenarioResult,
+  type ToolDefinition,
 } from "./types";
 
 export interface RunInput {
@@ -30,6 +31,11 @@ export interface RunInput {
   /** Force a mode instead of letting the profiler infer it from the system
    * prompt. Omit this to have Gauntlet understand the agent and decide. */
   mode?: EvalMode;
+  /** Tools the agent can call, if any (OpenAI tools[] shape) — Gauntlet mocks
+   * their results so it can test tool-calling behavior without owning the
+   * real implementations. Optional: an undeclared tool call still gets a
+   * generic mocked result rather than failing the run. */
+  tools?: ToolDefinition[];
   onProgress?: (p: RunProgress) => void;
   /** Aborts the run at the next job boundary. */
   signal?: AbortSignal;
@@ -39,6 +45,7 @@ export interface Providers {
   profiler: LlmProvider;
   scenarioGen: LlmProvider;
   userSim: LlmProvider;
+  toolMocker: LlmProvider;
   judge: LlmProvider;
   fixer: LlmProvider;
   judgeModel: string;
@@ -59,6 +66,7 @@ function fallbackProfile(mode: EvalMode, reason: string): AgentProfile {
     boundaries: [],
     failureModes: [],
     riskAreas: [],
+    toolsDetected: [],
   };
 }
 
@@ -113,6 +121,7 @@ export function defaultProviders(apiKey?: string): Providers {
     profiler: anthropic,
     scenarioGen: anthropic,
     userSim: anthropic,
+    toolMocker: anthropic,
     judge: anthropic,
     fixer: anthropic,
     judgeModel: MODELS.judge,
@@ -154,10 +163,12 @@ export async function runEval(
     totalConversations,
     message: "Entendiendo qué hace el agente",
   });
+  const tools = input.tools ?? [];
   const profileResult = await profileAgent(
     providers.profiler,
     MODELS.profiler,
     input.agentSystemPrompt,
+    tools,
   );
   const profile: AgentProfile = profileResult.ok
     ? profileResult.value
@@ -227,13 +238,25 @@ export async function runEval(
       const sessionId = `${job.scenario.id}-a${job.attempt}`;
       const sim =
         mode === "task"
-          ? await executeTask(input.connection, job.scenario, sessionId)
+          ? await executeTask(
+              input.connection,
+              job.scenario,
+              sessionId,
+              tools,
+              providers.toolMocker,
+              MODELS.toolMocker,
+              config.maxToolCallsPerTurn,
+            )
           : await simulateConversation(
               providers.userSim,
               MODELS.userSim,
               input.connection,
               job.scenario,
               sessionId,
+              tools,
+              providers.toolMocker,
+              MODELS.toolMocker,
+              config.maxToolCallsPerTurn,
             );
       if (!sim.ok) {
         completed++;

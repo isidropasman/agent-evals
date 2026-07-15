@@ -76,6 +76,7 @@ describe("runEval mode inference via profiler", () => {
     fetchReturning('{"total":100}');
     const providers: Providers = {
       profiler: new MockProvider([profilerHandler(TASK_PROFILE)]),
+      toolMocker: new MockProvider([]),
       scenarioGen: new MockProvider([
         (req) =>
           req.system.includes("procesan documentos")
@@ -122,6 +123,7 @@ describe("runEval mode inference via profiler", () => {
     fetchReturning("Puedo ayudarte con eso.");
     const providers: Providers = {
       profiler: new MockProvider([profilerHandler(CONVERSATIONAL_PROFILE)]),
+      toolMocker: new MockProvider([]),
       scenarioGen: new MockProvider([
         (req) =>
           req.system.includes("design test scenarios")
@@ -165,6 +167,7 @@ describe("runEval mode inference via profiler", () => {
     const providers: Providers = {
       // Profiler says "conversational" but the caller forces "task".
       profiler: new MockProvider([profilerHandler(CONVERSATIONAL_PROFILE)]),
+      toolMocker: new MockProvider([]),
       scenarioGen: new MockProvider([
         (req) =>
           req.system.includes("procesan documentos")
@@ -209,6 +212,7 @@ describe("runEval mode inference via profiler", () => {
     fetchReturning("reply");
     const providers: Providers = {
       profiler: new MockProvider([]), // no handler → profiling fails
+      toolMocker: new MockProvider([]),
       scenarioGen: new MockProvider([
         (req) =>
           req.system.includes("design test scenarios")

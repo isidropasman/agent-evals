@@ -98,6 +98,7 @@ async function cmdRun(args: string[]): Promise<number> {
         agentSystemPrompt: run.systemPrompt,
         agentFamily: run.agentFamily,
         mode: run.mode,
+        tools: run.tools,
         config: rc,
         onProgress: progressLine,
       },

@@ -345,6 +345,9 @@ function AgentProfileCard({ profile }: { profile: AgentProfile }) {
                     k="Por qué este modo"
                     v={profile.modeRationale}
                   />
+                  {profile.toolsDetected.length > 0 && (
+                    <Kv k="Tools detectadas" v={profile.toolsDetected.join(", ")} />
+                  )}
                 </div>
                 <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
                   <ProfileList title="Capacidades esperadas" items={profile.capabilities} />
@@ -473,14 +476,26 @@ function FailureExplorer({ results }: { results: ScenarioResult[] }) {
                         key={i}
                         className="border-l-2 pl-3 text-xs leading-relaxed"
                         style={{
-                          borderColor: t.role === "user" ? "var(--color-line-bright)" : "var(--color-signal-deep)",
+                          borderColor:
+                            t.role === "user"
+                              ? "var(--color-line-bright)"
+                              : t.role === "tool"
+                                ? "var(--color-warn)"
+                                : "var(--color-signal-deep)",
                         }}
                       >
                         <span
                           className="label normal-case"
-                          style={{ color: t.role === "user" ? "var(--color-ink-faint)" : "var(--color-signal-deep)" }}
+                          style={{
+                            color:
+                              t.role === "user"
+                                ? "var(--color-ink-faint)"
+                                : t.role === "tool"
+                                  ? "var(--color-warn)"
+                                  : "var(--color-signal-deep)",
+                          }}
                         >
-                          {t.role === "user" ? "usuario sim" : "agente"}
+                          {t.role === "user" ? "usuario sim" : t.role === "tool" ? "tool" : "agente"}
                         </span>
                         <p className="mt-0.5" style={{ color: "var(--color-ink-dim)" }}>{t.content}</p>
                       </div>

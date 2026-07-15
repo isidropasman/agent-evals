@@ -1,6 +1,7 @@
 import type { LlmProvider } from "./provider";
-import { sendToAgent, type AgentConnection } from "./connector";
-import type { EngineResult, Scenario, Turn } from "./types";
+import type { AgentConnection } from "./connector";
+import { runAgentTurn } from "./tool-loop";
+import type { EngineResult, Scenario, ToolDefinition, Turn } from "./types";
 
 const STOP_MARKER = "###END###";
 
@@ -15,6 +16,10 @@ export async function simulateConversation(
   conn: AgentConnection,
   scenario: Scenario,
   sessionId: string,
+  tools: ToolDefinition[],
+  toolProvider: LlmProvider,
+  toolModel: string,
+  maxToolCallsPerTurn: number,
 ): Promise<EngineResult<Turn[]>> {
   const transcript: Turn[] = [];
 
@@ -30,14 +35,16 @@ Rules:
 - When your objective is met, or clearly cannot be met, or the conversation has run its course, reply with exactly ${STOP_MARKER} and nothing else.`;
 
   for (let turn = 0; turn < scenario.maxTurns; turn++) {
-    // Simulated user speaks. It sees the transcript with roles flipped
-    // (agent's "assistant" turns are the user-sim's "user" turns).
-    const simMessages = transcript.map((t) => ({
-      role: (t.role === "assistant" ? "user" : "assistant") as
-        | "user"
-        | "assistant",
-      content: t.content,
-    }));
+    // Simulated user speaks. It only sees the user/assistant back-and-forth —
+    // tool activity is an implementation detail of how the agent produced its
+    // reply, not something a real end user would see, so it's filtered out
+    // here (it still lands in the full transcript below for the judge).
+    const simMessages = transcript
+      .filter((t) => t.role !== "tool")
+      .map((t) => ({
+        role: (t.role === "assistant" ? "user" : "assistant") as "user" | "assistant",
+        content: t.content,
+      }));
     if (simMessages.length === 0) {
       simMessages.push({ role: "user", content: "Begin the conversation." });
     }
@@ -55,14 +62,24 @@ Rules:
 
     transcript.push({ role: "user", content: userUtterance });
 
-    // Real agent replies over its endpoint.
-    const agentResult = await sendToAgent(conn, transcript, sessionId);
-    if (!agentResult.ok) {
-      // Surface connector failures as a transcript entry so the judge/report
-      // can attribute the failure rather than silently dropping it.
-      return agentResult;
+    // Real agent replies over its endpoint — negotiating any tool calls
+    // along the way (mocked results, fed back) until it produces a message.
+    const agentTurns = await runAgentTurn(
+      conn,
+      transcript,
+      tools,
+      toolProvider,
+      toolModel,
+      scenario,
+      sessionId,
+      maxToolCallsPerTurn,
+    );
+    if (!agentTurns.ok) {
+      // Surface connector/tool-loop failures as the run result so the
+      // judge/report can attribute the failure rather than silently dropping it.
+      return agentTurns;
     }
-    transcript.push({ role: "assistant", content: agentResult.value });
+    transcript.push(...agentTurns.value);
   }
 
   return { ok: true, value: transcript };

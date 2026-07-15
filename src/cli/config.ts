@@ -1,7 +1,12 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import type { AgentConnection } from "../engine/connector";
-import type { EngineResult, EvalMode, ScenarioCategory } from "../engine/types";
+import type {
+  EngineResult,
+  EvalMode,
+  ScenarioCategory,
+  ToolDefinition,
+} from "../engine/types";
 
 export interface GauntletConfig {
   agentName: string;
@@ -13,6 +18,12 @@ export interface GauntletConfig {
   systemPromptFile?: string;
   /** Inline system prompt — takes precedence over systemPromptFile. */
   systemPrompt?: string;
+  /** Tools the agent can call (OpenAI tools[] shape) — inline, takes
+   * precedence over toolsFile. Optional: only needed if the agent uses
+   * tools; Gauntlet mocks their results. */
+  tools?: ToolDefinition[];
+  /** Path (relative to the config file) to a JSON file with a tools[] array. */
+  toolsFile?: string;
   endpointUrl: string;
   protocol?: "openai" | "coval";
   auth?: {
@@ -42,6 +53,7 @@ export interface ResolvedRun {
   /** undefined = let the engine's profiler infer the mode from the prompt. */
   mode: EvalMode | undefined;
   systemPrompt: string;
+  tools: ToolDefinition[];
   connection: AgentConnection;
   agentFamily: "anthropic" | "openai" | "unknown";
   startCommand: string | null;
@@ -59,6 +71,8 @@ export function configTemplate(): string {
     agentName: "Mi agente",
     // mode: "conversational" | "task" — omitido a propósito: Gauntlet lee el
     // system prompt y decide. Fijalo solo si querés forzar uno de los dos.
+    // tools: [{name, description, parameters?}] o toolsFile: "./tools.json" —
+    // solo si tu agente llama herramientas; Gauntlet simula sus resultados.
     systemPromptFile: "./prompt.txt",
     endpointUrl: "http://localhost:8080/v1/chat/completions",
     protocol: "openai",
@@ -107,6 +121,26 @@ export function loadConfig(configPath: string): EngineResult<ResolvedRun> {
     if (!systemPrompt) return err(`El archivo ${promptPath} está vacío.`);
   }
 
+  // Tools are entirely optional — most agents don't have any. Inline wins
+  // over toolsFile, same precedence as systemPrompt/systemPromptFile.
+  let tools: ToolDefinition[] = cfg.tools ?? [];
+  if (tools.length === 0 && cfg.toolsFile?.trim()) {
+    const toolsPath = path.resolve(path.dirname(configPath), cfg.toolsFile);
+    let raw: string;
+    try {
+      raw = readFileSync(toolsPath, "utf8");
+    } catch {
+      return err(`No se pudo leer \`toolsFile\` en ${toolsPath}.`);
+    }
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      if (!Array.isArray(parsed)) throw new Error("not an array");
+      tools = parsed as ToolDefinition[];
+    } catch {
+      return err(`${toolsPath} debe ser un array JSON de {name, description, parameters?}.`);
+    }
+  }
+
   const connection: AgentConnection = {
     endpointUrl: cfg.endpointUrl.trim(),
     protocol: cfg.protocol ?? "openai",
@@ -122,6 +156,7 @@ export function loadConfig(configPath: string): EngineResult<ResolvedRun> {
       clientName: cfg.clientName?.trim() || null,
       mode: cfg.mode,
       systemPrompt,
+      tools,
       connection,
       agentFamily: cfg.agentFamily ?? "unknown",
       startCommand: cfg.startCommand?.trim() || null,

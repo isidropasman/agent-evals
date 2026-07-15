@@ -27,8 +27,27 @@ export function Onboarding() {
   const [mode, setMode] = useState<"auto" | "conversational" | "task">("auto");
   const [systemPrompt, setSystemPrompt] = useState("");
   const [agentFamily, setAgentFamily] = useState<"anthropic" | "openai" | "unknown">("unknown");
+  const [showTools, setShowTools] = useState(false);
+  const [toolsJson, setToolsJson] = useState("");
+  const [toolsError, setToolsError] = useState<string | null>(null);
   const [scenarioCount, setScenarioCount] = useState(50);
   const [k, setK] = useState(4);
+
+  function parseToolsJson(): { ok: true; value: unknown[] } | { ok: false; error: string } {
+    if (!toolsJson.trim()) return { ok: true, value: [] };
+    try {
+      const parsed: unknown = JSON.parse(toolsJson);
+      if (!Array.isArray(parsed)) return { ok: false, error: "Debe ser un array JSON." };
+      for (const item of parsed as Record<string, unknown>[]) {
+        if (typeof item?.name !== "string" || typeof item?.description !== "string") {
+          return { ok: false, error: "Cada tool necesita al menos {name, description}." };
+        }
+      }
+      return { ok: true, value: parsed };
+    } catch {
+      return { ok: false, error: "JSON inválido." };
+    }
+  }
 
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<
@@ -83,6 +102,12 @@ export function Onboarding() {
   }
 
   async function submit() {
+    const toolsParsed = parseToolsJson();
+    if (!toolsParsed.ok) {
+      setToolsError(toolsParsed.error);
+      setShowTools(true);
+      return;
+    }
     setSubmitting(true);
     setError(null);
     try {
@@ -100,6 +125,7 @@ export function Onboarding() {
           systemPrompt,
           agentFamily,
           mode,
+          tools: toolsParsed.value,
           scenarioCount,
           k,
         }),
@@ -270,6 +296,35 @@ export function Onboarding() {
               onChange={(v) => setAgentFamily(v as typeof agentFamily)}
             />
           </Field>
+
+          <button
+            onClick={() => setShowTools(!showTools)}
+            className="label transition-colors hover:text-[var(--color-signal)]"
+          >
+            {showTools ? "− ocultar" : "+"} ¿tu agente llama herramientas/tools? (opcional)
+          </button>
+          {showTools && (
+            <Field
+              label="Tools del agente"
+              hint="Opcional. Array JSON estilo OpenAI tools[]: [{name, description, parameters?}]. Gauntlet simula sus resultados para testear cómo el agente las usa."
+            >
+              <TextArea
+                rows={5}
+                value={toolsJson}
+                onChange={(e) => {
+                  setToolsJson(e.target.value);
+                  setToolsError(null);
+                }}
+                placeholder={'[{"name": "get_weather", "description": "Devuelve el clima de una ciudad", "parameters": {"type": "object", "properties": {"city": {"type": "string"}}}}]'}
+              />
+              {toolsError && (
+                <p className="mt-1.5 text-xs" style={{ color: "var(--color-fail)" }}>
+                  {toolsError}
+                </p>
+              )}
+            </Field>
+          )}
+
           <div className="flex items-center justify-between pt-2">
             <button onClick={() => setStep(1)} className="label transition-colors hover:text-[var(--color-signal)]">
               ← atrás

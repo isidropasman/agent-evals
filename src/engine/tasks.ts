@@ -1,12 +1,14 @@
-import { sendToAgent, type AgentConnection } from "./connector";
+import type { AgentConnection } from "./connector";
 import type { LlmProvider } from "./provider";
 import { extractJson } from "./json";
+import { runAgentTurn } from "./tool-loop";
 import type {
   AgentProfile,
   EngineResult,
   RunConfig,
   Scenario,
   ScenarioCategory,
+  ToolDefinition,
   Turn,
 } from "./types";
 
@@ -130,27 +132,33 @@ Devolvé JSON: {"cases": [{title, document, expected}, ...]}`;
 }
 
 /**
- * Single-shot execution: send the case's input document to the agent and capture
- * its output as a 2-turn transcript ([document, output]) so the existing judge
- * and reporting reuse without change.
+ * Single-shot execution: send the case's input document to the agent and
+ * capture its output as a transcript ([document, ...any tool activity,
+ * output]) so the existing judge and reporting reuse without change. Task
+ * agents can use tools too (e.g. an invoice agent calling a "lookup_vendor"
+ * tool) — runAgentTurn negotiates that the same way conversational mode does.
  */
 export async function executeTask(
   connection: AgentConnection,
   scenario: Scenario,
   sessionId: string,
+  tools: ToolDefinition[],
+  toolProvider: LlmProvider,
+  toolModel: string,
+  maxToolCallsPerTurn: number,
 ): Promise<EngineResult<Turn[]>> {
   const input = scenario.input ?? "";
-  const send = await sendToAgent(
+  const documentTurn: Turn = { role: "user", content: input };
+  const agentTurns = await runAgentTurn(
     connection,
-    [{ role: "user", content: input }],
+    [documentTurn],
+    tools,
+    toolProvider,
+    toolModel,
+    scenario,
     sessionId,
+    maxToolCallsPerTurn,
   );
-  if (!send.ok) return send;
-  return {
-    ok: true,
-    value: [
-      { role: "user", content: input },
-      { role: "assistant", content: send.value },
-    ],
-  };
+  if (!agentTurns.ok) return agentTurns;
+  return { ok: true, value: [documentTurn, ...agentTurns.value] };
 }
