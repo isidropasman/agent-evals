@@ -79,7 +79,7 @@ Sé específico y concreto, no genérico. Devolvé JSON según el schema.`;
   const result = await provider.complete({
     model,
     system,
-    maxTokens: 3000,
+    maxTokens: 8000,
     messages: [{ role: "user", content: userPrompt }],
     jsonSchema: PROFILE_SCHEMA as unknown as Record<string, unknown>,
   });

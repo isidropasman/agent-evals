@@ -97,7 +97,7 @@ describe("passesGate", () => {
       fixes: [],
       judgeModel: "m",
       judgeFamilyDisclaimer: null,
-      totals: { scenarios: 30, passed: 0, conversations: 120 },
+      totals: { scenarios: 30, passed: 0, conversations: 120, unevaluated: 0 },
       profile: {
         summary: "test",
         mode: "conversational",

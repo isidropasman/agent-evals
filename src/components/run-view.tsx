@@ -206,6 +206,13 @@ function ResultsView({
             {report.totals.passed}/{report.totals.scenarios} escenarios ·{" "}
             {report.totals.conversations} conversaciones · pass^k
           </div>
+          {report.totals.unevaluated > 0 ? (
+            <div className="mt-2 text-xs" style={{ color: "var(--color-warn)" }}>
+              ⚠ {report.totals.unevaluated} conversaciones no se pudieron evaluar
+              (falla del juez, no del agente). Quedan fuera del score; si son más
+              del 5% del total, la corrida no se certifica.
+            </div>
+          ) : null}
         </div>
 
         <div className="grid grid-cols-1 gap-px bg-[var(--color-line-bright)] md:col-span-7">

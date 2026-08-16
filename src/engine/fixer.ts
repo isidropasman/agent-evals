@@ -75,7 +75,7 @@ Propose ONE targeted fix. Output JSON:
     const result = await provider.complete({
       model: fixerModel,
       system,
-      maxTokens: 2000,
+      maxTokens: 6000,
       messages: [{ role: "user", content: userPrompt }],
       jsonSchema: FIX_SCHEMA as unknown as Record<string, unknown>,
     });

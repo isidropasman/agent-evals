@@ -51,18 +51,28 @@ ${globalCriteria}
 TRANSCRIPT:
 ${renderTranscript(transcript)}
 
-Evaluate. Return JSON: {"pass": boolean, "failedCriteria": [strings naming each failed criterion], "rationale": "one paragraph"}. pass is true only if failedCriteria is empty.`;
+Evaluate. Return JSON: {"pass": boolean, "failedCriteria": [strings naming each failed criterion], "rationale": "one or two sentences"}. pass is true only if failedCriteria is empty. Keep the rationale short — a long one risks being cut off.`;
 
-  const result = await provider.complete({
-    model: judgeModel,
-    system,
-    maxTokens: 1500,
-    messages: [{ role: "user", content: userPrompt }],
-    jsonSchema: VERDICT_SCHEMA as unknown as Record<string, unknown>,
-  });
-  if (!result.ok) return result;
+  // maxTokens covers thinking + output on current models, and adaptive
+  // thinking is on by default — a tight budget produced empty responses and
+  // JSON truncated mid-string, which the runner then read as agent failures.
+  const ask = () =>
+    provider.complete({
+      model: judgeModel,
+      system,
+      maxTokens: 6000,
+      messages: [{ role: "user", content: userPrompt }],
+      jsonSchema: VERDICT_SCHEMA as unknown as Record<string, unknown>,
+    });
 
-  const parsed = extractJson<Verdict>(result.value);
+  let result = await ask();
+  let parsed = result.ok ? extractJson<Verdict>(result.value) : result;
+  if (!parsed.ok) {
+    // One retry: a verdict lost to a transient provider hiccup or a malformed
+    // reply must not be charged to the agent under test.
+    result = await ask();
+    parsed = result.ok ? extractJson<Verdict>(result.value) : result;
+  }
   if (!parsed.ok) return parsed;
 
   // Enforce the invariant: pass ⇔ no failed criteria.

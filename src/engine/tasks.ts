@@ -105,7 +105,7 @@ Devolvé JSON: {"cases": [{title, document, expected}, ...]}`;
     const result = await provider.complete({
       model,
       system,
-      maxTokens: 8000,
+      maxTokens: 16000,
       messages: [{ role: "user", content: userPrompt }],
       jsonSchema: TASK_CASE_SCHEMA as unknown as Record<string, unknown>,
     });

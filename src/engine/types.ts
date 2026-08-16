@@ -57,12 +57,20 @@ export interface ConversationResult {
   transcript: Turn[];
   verdict: Verdict;
   error?: string;
+  /** The conversation happened but could not be judged (judge outage, bad
+   * JSON). Distinct from a failure: an agent must never be marked down for
+   * our own inability to evaluate it, so these are excluded from scoring and
+   * reported separately. A connector failure is NOT this — an agent that
+   * doesn't respond really did fail. */
+  unevaluated?: boolean;
 }
 
 export interface ScenarioResult {
   scenario: Scenario;
   attempts: ConversationResult[];
   passK: boolean;
+  /** No attempt of this scenario could be judged — excluded from the score. */
+  unevaluated: boolean;
 }
 
 export interface PromptFix {
@@ -87,7 +95,15 @@ export interface RunReport {
   fixes: PromptFix[];
   judgeModel: string;
   judgeFamilyDisclaimer: string | null;
-  totals: { scenarios: number; passed: number; conversations: number };
+  totals: {
+    scenarios: number;
+    passed: number;
+    conversations: number;
+    /** Conversations that ran but could not be judged. A run with a material
+     * share of these cannot be certified — the score is computed over fewer
+     * conversations than it appears to be. */
+    unevaluated: number;
+  };
   /** What Gauntlet understood about the agent before designing the test plan. */
   profile: AgentProfile;
 }

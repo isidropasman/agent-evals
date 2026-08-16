@@ -96,9 +96,12 @@ async function postToAgent(
         : { role: m.role, content: m.content },
   );
 
+  // `user` is OpenAI's standard end-user identifier field; carrying the
+  // session id there means both protocols tell the agent which conversation
+  // a request belongs to, which agents that keep state server-side need.
   const body =
     conn.protocol === "openai"
-      ? JSON.stringify({ model: "agent", messages: wireBody })
+      ? JSON.stringify({ model: "agent", messages: wireBody, user: sessionId })
       : JSON.stringify({ sessionId, messages: wireBody });
 
   // Re-validate on every request: the URL was checked at run creation, but

@@ -235,3 +235,73 @@ describe("runEval full pipeline (mock)", () => {
     }
   });
 });
+
+/**
+ * Adversarial coverage used to be whatever the generator happened to think of,
+ * so a run might probe prompt injection or might not — in benchmark runs the
+ * same suite provoked an injected instruction once and never the next time.
+ */
+describe("adversarial attack-class coverage", () => {
+  async function adversarialPromptFor(toolsDetected: string[]): Promise<string> {
+    let captured = "";
+    const provider = new MockProvider([
+      (req: CompletionRequest) => {
+        if (!req.system.includes("design test scenarios")) return null;
+        const text = req.messages.map((m) => m.content).join("\n");
+        if (text.includes('of category "adversarial"')) captured = text;
+        return JSON.stringify({
+          scenarios: [{ title: "s", persona: "p", objective: "o", successCriteria: "c" }],
+        });
+      },
+    ]);
+    const { generateScenarios } = await import("@/engine/scenarios");
+    const { DEFAULT_RUN_CONFIG } = await import("@/engine/types");
+    await generateScenarios(provider, "m", "prompt", DEFAULT_RUN_CONFIG, {
+      summary: "",
+      mode: "conversational",
+      modeConfidence: "high",
+      modeRationale: "",
+      domain: "d",
+      capabilities: ["c"],
+      boundaries: ["b"],
+      failureModes: ["f"],
+      riskAreas: ["r"],
+      toolsDetected,
+    });
+    return captured;
+  }
+
+  it("assigns a required attack class to every adversarial scenario", async () => {
+    const prompt = await adversarialPromptFor([]);
+    expect(prompt).toContain("COBERTURA OBLIGATORIA");
+    for (const marker of [
+      "Extracción del system prompt",
+      "Instrucción inyectada",
+      "Bait de alucinación",
+      "Empuje fuera de alcance",
+    ]) {
+      expect(prompt).toContain(marker);
+    }
+  });
+
+  it("only demands tool-result injection coverage from agents that use tools", async () => {
+    expect(await adversarialPromptFor([])).not.toContain("Inyección indirecta");
+    expect(await adversarialPromptFor(["lookup_order"])).toContain("Inyección indirecta");
+  });
+
+  it("leaves the happy-path prompt free of attack instructions", async () => {
+    const provider = new MockProvider([
+      (req: CompletionRequest) => {
+        if (!req.system.includes("design test scenarios")) return null;
+        const text = req.messages.map((m) => m.content).join("\n");
+        if (text.includes('of category "happy_path"')) {
+          expect(text).not.toContain("COBERTURA OBLIGATORIA");
+        }
+        return JSON.stringify({ scenarios: [] });
+      },
+    ]);
+    const { generateScenarios } = await import("@/engine/scenarios");
+    const { DEFAULT_RUN_CONFIG } = await import("@/engine/types");
+    await generateScenarios(provider, "m", "prompt", DEFAULT_RUN_CONFIG);
+  });
+});

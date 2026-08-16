@@ -84,6 +84,99 @@ export class AnthropicProvider implements LlmProvider {
   }
 }
 
+const OPENAI_RETRYABLE = new Set([408, 409, 429, 500, 502, 503, 504]);
+
+/**
+ * OpenAI-compatible provider, reached over plain fetch (no extra SDK). Its
+ * reason for existing is the judge: judging an Anthropic-family agent with an
+ * Anthropic-family judge invites self-preference bias, so the judge must be
+ * able to come from a different family. Points at any OpenAI-shaped base URL,
+ * so OpenAI, Azure, a gateway or a local model all work.
+ */
+export class OpenAiProvider implements LlmProvider {
+  readonly family = "openai" as const;
+  private apiKey: string;
+  private baseUrl: string;
+
+  constructor(apiKey: string, baseUrl?: string) {
+    this.apiKey = apiKey;
+    this.baseUrl = (baseUrl ?? process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1")
+      .replace(/\/+$/, "");
+  }
+
+  async complete(req: CompletionRequest): Promise<EngineResult<string>> {
+    // ponytail: json_object mode + the engine's existing forgiving extractJson,
+    // rather than strict json_schema — strict mode rejects schemas that don't
+    // list every property as required, and varies across OpenAI-compatible
+    // gateways. Upgrade to json_schema if a model is seen drifting off-shape.
+    const body = {
+      model: req.model,
+      max_completion_tokens: req.maxTokens,
+      messages: [
+        { role: "system", content: req.system },
+        ...req.messages,
+      ],
+      ...(req.jsonSchema ? { response_format: { type: "json_object" as const } } : {}),
+    };
+
+    let lastError = "";
+    let lastStatus = 0;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      if (attempt > 0) {
+        const backoffMs = 500 * 2 ** (attempt - 1) + Math.floor(Math.random() * 250);
+        await new Promise((resolve) => setTimeout(resolve, backoffMs));
+      }
+      let response: Response;
+      try {
+        response = await fetch(`${this.baseUrl}/chat/completions`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            authorization: `Bearer ${this.apiKey}`,
+          },
+          body: JSON.stringify(body),
+          signal: AbortSignal.timeout(120_000),
+        });
+      } catch (error) {
+        lastError = error instanceof Error ? error.message : String(error);
+        continue;
+      }
+
+      if (!response.ok) {
+        const text = await response.text().catch(() => "");
+        lastError = `HTTP ${response.status}: ${text.slice(0, 300)}`;
+        lastStatus = response.status;
+        if (OPENAI_RETRYABLE.has(response.status)) continue;
+        return {
+          ok: false,
+          error: { kind: "provider_error", message: `OpenAI ${lastError}` },
+        };
+      }
+
+      const json = (await response.json().catch(() => null)) as {
+        choices?: { message?: { content?: string } }[];
+      } | null;
+      const text = json?.choices?.[0]?.message?.content;
+      if (typeof text !== "string" || text.length === 0) {
+        lastError = "empty response";
+        continue;
+      }
+      return { ok: true, value: text };
+    }
+
+    // Retries exhausted. Keep rate limiting distinguishable from a hard error:
+    // the runner degrades a single conversation on the latter, but a sustained
+    // 429 means the whole run is going too fast.
+    return {
+      ok: false,
+      error: {
+        kind: lastStatus === 429 ? "provider_rate_limited" : "provider_error",
+        message: `OpenAI request failed after retries: ${lastError}`,
+      },
+    };
+  }
+}
+
 /**
  * Deterministic provider for tests and the built-in demo. Responses are
  * routed by inspecting the system prompt role markers the engine embeds.
@@ -123,3 +216,7 @@ export const MODELS = {
   judge: "claude-sonnet-5",
   fixer: "claude-sonnet-5",
 } as const;
+
+/** Judge model used when an OpenAI-family judge is available. Overridable
+ * because the right model name depends on the account and base URL in use. */
+export const OPENAI_JUDGE_MODEL = process.env.GAUNTLET_OPENAI_JUDGE_MODEL ?? "gpt-4.1";

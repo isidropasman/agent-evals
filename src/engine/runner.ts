@@ -1,7 +1,13 @@
 import { probeAgent, type AgentConnection } from "./connector";
 import { judgeConversation } from "./judge";
 import { proposeFixes } from "./fixer";
-import { AnthropicProvider, MODELS, type LlmProvider } from "./provider";
+import {
+  AnthropicProvider,
+  MODELS,
+  OPENAI_JUDGE_MODEL,
+  OpenAiProvider,
+  type LlmProvider,
+} from "./provider";
 import { profileAgent } from "./profiler";
 import { generateRubric, generateScenarios } from "./scenarios";
 import { generateTaskCases, executeTask } from "./tasks";
@@ -98,33 +104,43 @@ async function pool<T>(
   return results;
 }
 
-function pickJudge(agentFamily: "anthropic" | "openai" | "unknown"): {
-  model: string;
-  disclaimer: string | null;
-} {
-  // Judge must differ in family from the agent under test to avoid
-  // self-preference bias. Only Anthropic judging is wired here; when the agent
-  // is Anthropic-based we still use an Anthropic judge and disclose it.
-  if (agentFamily === "anthropic") {
+/**
+ * A judge from the same model family as the agent under test is biased in the
+ * agent's favour (self-preference). This reports the actual family pairing in
+ * effect, so a same-family run is disclosed on the report and the certificate
+ * rather than silently passing as neutral.
+ */
+export function pickJudge(
+  agentFamily: "anthropic" | "openai" | "unknown",
+  judgeProvider: LlmProvider,
+  judgeModel: string,
+): { model: string; disclaimer: string | null } {
+  if (judgeProvider.family === agentFamily) {
     return {
-      model: MODELS.judge,
-      disclaimer:
-        "El agente y el juez pertenecen a la misma familia de modelos (Anthropic). Configurar un juez OpenAI elimina el riesgo de self-preference bias.",
+      model: judgeModel,
+      disclaimer: `El agente y el juez pertenecen a la misma familia de modelos (${agentFamily}). Configurá una API key de la otra familia para que el juez sea cross-family y desaparezca el riesgo de self-preference bias.`,
     };
   }
-  return { model: MODELS.judge, disclaimer: null };
+  return { model: judgeModel, disclaimer: null };
 }
 
-export function defaultProviders(apiKey?: string): Providers {
+/**
+ * Anthropic drives generation and simulation; the judge is moved to OpenAI
+ * whenever an OpenAI key exists, because cross-family judging is the one place
+ * where the second provider materially changes the result's credibility.
+ */
+export function defaultProviders(apiKey?: string, openAiKey?: string): Providers {
   const anthropic = new AnthropicProvider(apiKey);
+  const openaiKey = openAiKey ?? process.env.OPENAI_API_KEY;
+  const judge = openaiKey ? new OpenAiProvider(openaiKey) : anthropic;
   return {
     profiler: anthropic,
     scenarioGen: anthropic,
     userSim: anthropic,
     toolMocker: anthropic,
-    judge: anthropic,
+    judge,
     fixer: anthropic,
-    judgeModel: MODELS.judge,
+    judgeModel: openaiKey ? OPENAI_JUDGE_MODEL : MODELS.judge,
   };
 }
 
@@ -202,14 +218,18 @@ export async function runEval(
           config,
           profile,
         ),
-    generateRubric(providers.judge, MODELS.judge, input.agentSystemPrompt, profile),
+    generateRubric(providers.judge, providers.judgeModel, input.agentSystemPrompt, profile),
   ]);
   if (!scenariosResult.ok) return scenariosResult;
   if (!rubricResult.ok) return rubricResult;
 
   const scenarios = scenariosResult.value;
   const rubric = rubricResult.value;
-  const judge = pickJudge(input.agentFamily ?? "unknown");
+  const judge = pickJudge(
+    input.agentFamily ?? "unknown",
+    providers.judge,
+    providers.judgeModel,
+  );
 
   // Build one task per (scenario × attempt). Each task simulates + judges.
   interface Job {
@@ -295,16 +315,19 @@ export async function runEval(
       });
 
       if (!verdict.ok) {
+        // Our failure, not the agent's — mark unevaluated so scoring skips it
+        // instead of recording a verdict we never actually reached.
         return {
           scenarioId: job.scenario.id,
           attempt: job.attempt,
           transcript: sim.value,
           verdict: {
             pass: false,
-            failedCriteria: ["judge failed"],
-            rationale: verdict.error.message,
+            failedCriteria: [],
+            rationale: `No se pudo evaluar esta conversación: ${verdict.error.message}`,
           },
           error: verdict.error.message,
+          unevaluated: true,
         };
       }
       return {
@@ -330,12 +353,16 @@ export async function runEval(
     const attempts = (byScenario.get(scenario.id) ?? []).sort(
       (a, b) => a.attempt - b.attempt,
     );
-    const passK = attempts.length > 0 && attempts.every((a) => a.verdict.pass);
-    return { scenario, attempts, passK };
+    // pass^k over the attempts we could actually judge. A scenario whose every
+    // attempt went unjudged is unevaluated, not failed.
+    const judged = attempts.filter((a) => !a.unevaluated);
+    const passK = judged.length > 0 && judged.every((a) => a.verdict.pass);
+    return { scenario, attempts, passK, unevaluated: judged.length === 0 };
   });
 
   const categories = computeCategoryScores(scenarioResults);
   const score = computeWeightedScore(categories, config.weights);
+  const unevaluated = conversationResults.filter((c) => c.unevaluated).length;
 
   emit({
     phase: "fixing",
@@ -353,9 +380,15 @@ export async function runEval(
   const fixes = fixesResult.ok ? fixesResult.value : [];
 
   const passedScenarios = scenarioResults.filter((r) => r.passK).length;
+  // Certification asserts the suite actually ran. Above 5% unjudged the score
+  // is being computed over a materially smaller sample than it claims, so no
+  // certificate — better to re-run than to stamp a partial result.
+  const coverageOk =
+    totalConversations > 0 && unevaluated / totalConversations <= 0.05;
   const report: RunReport = {
     score,
-    certified: score >= 0.9 && categories.every((c) => c.rate >= 0.8),
+    certified:
+      coverageOk && score >= 0.9 && categories.every((c) => c.rate >= 0.8),
     categories,
     scenarioResults,
     fixes,
@@ -365,6 +398,7 @@ export async function runEval(
       scenarios: scenarios.length,
       passed: passedScenarios,
       conversations: totalConversations,
+      unevaluated,
     },
     profile,
   };
@@ -382,7 +416,11 @@ export async function runEval(
 function computeCategoryScores(results: ScenarioResult[]): CategoryScore[] {
   const categories: ScenarioCategory[] = ["happy_path", "edge_case", "adversarial"];
   return categories.map((category) => {
-    const inCat = results.filter((r) => r.scenario.category === category);
+    // Unevaluated scenarios are out of the denominator: including them would
+    // silently depress the rate for a judging outage the agent didn't cause.
+    const inCat = results.filter(
+      (r) => r.scenario.category === category && !r.unevaluated,
+    );
     const passed = inCat.filter((r) => r.passK).length;
     return {
       category,

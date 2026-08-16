@@ -84,6 +84,11 @@ export function renderReport(report: RunReport, run: ResolvedRun): string {
     `  ${verdictColor}${c.bold}${scorePct}/100${c.reset}  ${verdictColor}${passed ? "PASA EL GATE" : "NO PASA"}${c.reset}` +
       `   ${c.dim}${report.totals.passed}/${report.totals.scenarios} escenarios · ${report.totals.conversations} conversaciones · pass^${run.k}${c.reset}`,
   );
+  if (report.totals.unevaluated > 0) {
+    lines.push(
+      `  ${c.amber}⚠ ${report.totals.unevaluated} conversaciones sin evaluar (falla del juez, no del agente) — fuera del score${c.reset}`,
+    );
+  }
   lines.push("");
 
   for (const cat of report.categories) {
