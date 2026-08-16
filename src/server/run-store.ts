@@ -2,6 +2,7 @@ import type { AgentConnection } from "@/engine/connector";
 import { defaultProviders, RunAbortedError, runEval } from "@/engine/runner";
 import type { EvalMode, RunConfig, ToolDefinition } from "@/engine/types";
 import { completeRun, createRun, failRun, updateProgress } from "./db";
+import { resolveKey } from "./keys";
 
 export interface StartRunInput {
   agentName: string;
@@ -38,8 +39,10 @@ export function startRun(id: string, input: StartRunInput): void {
     createdAt: Date.now(),
   });
 
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  const providers = defaultProviders(apiKey);
+  const providers = defaultProviders(
+    resolveKey("anthropic") ?? undefined,
+    resolveKey("openai") ?? undefined,
+  );
   const controller = new AbortController();
   controllers.set(id, controller);
 

@@ -362,6 +362,22 @@ export function Onboarding() {
             <Row k="Agente" v={agentName || "—"} />
             <Row k="Endpoint" v={endpointUrl || "—"} />
             <Row k="Conversaciones" v={`${scenarioCount} × ${k} = ${scenarioCount * k}`} />
+            {(() => {
+              const est = estimateRun(scenarioCount, k);
+              return (
+                <>
+                  <Row k="Llamadas al LLM" v={`~${est.calls.toLocaleString("es-AR")}`} />
+                  <Row
+                    k="Costo estimado"
+                    v={`~USD ${est.usd.toFixed(2)} · ~${est.minutes} min`}
+                  />
+                </>
+              );
+            })()}
+            <p className="pt-1 leading-relaxed" style={{ color: "var(--color-ink-faint)" }}>
+              Estimación aproximada sobre tu cuenta de Anthropic. Varía con el largo
+              de las conversaciones y del system prompt.
+            </p>
           </div>
 
           {error && (
@@ -382,6 +398,45 @@ export function Onboarding() {
       )}
     </Panel>
   );
+}
+
+/**
+ * A run is hundreds of LLM calls, and "I didn't know it would cost that" is the
+ * fastest way to lose someone on their first try. Rough by construction — the
+ * point is the order of magnitude before you press the button, not accounting.
+ *
+ * Rates are USD per million tokens (Anthropic list, Aug 2026): Sonnet 5
+ * $2 in / $10 out during the introductory period, Haiku 4.5 $1 in / $5 out.
+ */
+const RATES = {
+  sonnetIn: 2 / 1_000_000,
+  sonnetOut: 10 / 1_000_000,
+  haikuIn: 1 / 1_000_000,
+  haikuOut: 5 / 1_000_000,
+} as const;
+
+const AVG_TURNS = 6;
+
+function estimateRun(scenarioCount: number, k: number): { calls: number; usd: number; minutes: number } {
+  const conversations = scenarioCount * k;
+
+  // Per conversation: one simulated-user call per turn (Haiku) + one judge call (Sonnet).
+  const simCost = AVG_TURNS * (1500 * RATES.haikuIn + 120 * RATES.haikuOut);
+  const judgeCost = 3000 * RATES.sonnetIn + 300 * RATES.sonnetOut;
+
+  // Fixed per run: profiler + 3 scenario-generation calls + rubric + fixer.
+  const fixedCost =
+    (2000 * RATES.sonnetIn + 1500 * RATES.sonnetOut) +
+    3 * (2000 * RATES.sonnetIn + 4000 * RATES.sonnetOut) +
+    (1500 * RATES.sonnetIn + 600 * RATES.sonnetOut) +
+    (6000 * RATES.sonnetIn + 2000 * RATES.sonnetOut);
+
+  return {
+    calls: conversations * (AVG_TURNS + 1) + 6,
+    usd: conversations * (simCost + judgeCost) + fixedCost,
+    // 10 conversations run in parallel; each takes roughly half a minute.
+    minutes: Math.max(1, Math.round((conversations / 10) * 0.5)),
+  };
 }
 
 function Row({ k, v }: { k: string; v: string }) {

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
+import { resolveKey } from "@/server/keys";
 
 /**
  * A deliberately flawed demo support agent, so users can run a real eval in one
@@ -38,7 +39,7 @@ export async function POST(req: Request) {
     );
   }
 
-  const apiKey = process.env.ANTHROPIC_API_KEY;
+  const apiKey = resolveKey("anthropic");
   if (!apiKey) {
     // Offline fallback so the demo endpoint is reachable without a key —
     // returns a canned flawed reply that still trips the eval.

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { probeAgent, type AgentConnection } from "@/engine/connector";
 import { assertAllowedUrl } from "@/engine/ssrf";
+import { keyStatus } from "@/server/keys";
 
 export const runtime = "nodejs";
 
@@ -46,6 +47,6 @@ export async function POST(req: Request) {
   return NextResponse.json({
     ok: true,
     reply: probe.value.slice(0, 500),
-    anthropicConfigured: Boolean(process.env.ANTHROPIC_API_KEY),
+    anthropicConfigured: keyStatus("anthropic").configured,
   });
 }

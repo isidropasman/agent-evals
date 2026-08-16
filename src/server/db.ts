@@ -25,9 +25,33 @@ function db(): Database.Database {
       error TEXT,
       created_at INTEGER NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
   `);
   _db = conn;
   return conn;
+}
+
+export function getSetting(key: string): string | null {
+  const row = db().prepare(`SELECT value FROM settings WHERE key = ?`).get(key) as
+    | { value: string }
+    | undefined;
+  return row?.value ?? null;
+}
+
+export function setSetting(key: string, value: string | null): void {
+  if (value === null) {
+    db().prepare(`DELETE FROM settings WHERE key = ?`).run(key);
+    return;
+  }
+  db()
+    .prepare(
+      `INSERT INTO settings (key, value) VALUES (?, ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+    )
+    .run(key, value);
 }
 
 export type RunStatus = "running" | "done" | "error";
