@@ -10,9 +10,17 @@ export default function Home() {
           <span className="font-display text-xl font-900 tracking-tight">GAUNTLET</span>
           <span className="label">/ agent proving ground</span>
         </div>
-        <Link href="/runs" className="label transition-colors hover:text-[var(--color-signal)]">
-          historial ↗
-        </Link>
+        <nav className="flex gap-6">
+          <Link
+            href="/benchmark"
+            className="label transition-colors hover:text-[var(--color-signal)]"
+          >
+            benchmark ↗
+          </Link>
+          <Link href="/runs" className="label transition-colors hover:text-[var(--color-signal)]">
+            historial ↗
+          </Link>
+        </nav>
       </header>
 
       <HealthBanner />
