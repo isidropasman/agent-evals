@@ -4,11 +4,11 @@
 
 ### `/ agent proving ground`
 
-**Test agents before putting them into production.**
+**The black-box test harness for AI agents.**
 
-Black-box evaluation for conversational and task-processing agents: connect an endpoint, let Gauntlet generate agent-specific tests, put it through adversarial conversations, and get actionable evidence.
+Your agent can look safe in a demo and still fail under pressure. Gauntlet turns the deployed endpoint into a repeatable test surface: it learns the agent's boundaries, generates targeted scenarios, exercises real conversations, and produces evidence you can act on before a user finds the bug.
 
-<a href="#60-second-start">60-second start</a> · <a href="#ci-cli">CI CLI</a> · <a href="#how-it-evaluates">How it evaluates</a> · <a href="#reproducible-benchmark">Benchmark</a>
+<a href="#60-second-start">60-second start</a> · <a href="#why-gauntlet">Why Gauntlet</a> · <a href="#how-it-evaluates">How it evaluates</a> · <a href="#reproducible-benchmark">Benchmark</a>
 
 <br />
 
@@ -19,16 +19,43 @@ Black-box evaluation for conversational and task-processing agents: connect an e
 > [!IMPORTANT]
 > Gauntlet tests the behavior of the deployed agent, but uses the `system prompt` to understand the domain and design scenarios. You need a compatible HTTP endpoint and an Anthropic API key to generate and evaluate the suite. An OpenAI key is optional and moves the judge to a different model family.
 
-## What it is
+| Planted defects found | Judge recall | Instrumentation required | Wire protocols |
+| ---: | ---: | ---: | ---: |
+| **7/7** | **98%** | **0** | **2** |
 
-Gauntlet is a tool for finding agent failures before they reach a real user. It requires no instrumentation: it observes the agent endpoint as a black box, simulates users, follows multi-turn conversations, negotiates tool calls, and judges every result against an explicit rubric.
+> An agent does not pass because its prompt sounds safe. It passes because repeated interactions produce evidence that it stays inside its role, handles pressure, and does not turn untrusted data into instructions.
+
+## Why Gauntlet
+
+Gauntlet is deliberately built around the constraint teams hit in production: the evaluator usually cannot instrument the agent. It sees an endpoint, a prompt, and the behavior that comes back. From that small surface it builds a test loop with enough structure to be useful in CI and enough context to catch failures that a static prompt review cannot see.
+
+- **Behavior over intent.** Test the deployed agent, not a prompt pasted into a review window. The same connector handles multi-turn state, session IDs, response parsing, and tool-call round trips.
+- **Coverage over lucky prompts.** Adversarial categories are assigned round-robin, so prompt leakage, injection, hallucination bait, authority pressure, scope creep, social pressure, and tool-result injection do not depend on which attacks a generator happens to remember.
+- **Measurement over vibes.** Binary verdicts, explicit rubrics, `pass^k`, per-category floors, and `unevaluated` results make the score inspectable. A judge outage is not quietly counted as an agent failure.
+- **Evidence to repair.** Every failed scenario keeps its transcript, failed criteria, rationale, and a targeted system-prompt fix. The output is a debugging queue, not just a number.
+- **Works with tool-using agents.** Real tools are not required. Gauntlet simulates their results, can inject hostile content through a tool response, and catches agents that never stop calling tools.
+
+### The product loop
+
+```mermaid
+flowchart LR
+    A[Deployed endpoint] --> B[Profile the agent]
+    B --> C[Generate targeted cases]
+    C --> D[Simulate users and tools]
+    D --> E[Capture transcript]
+    E --> F[Binary judge + rubric]
+    F --> G{Pass^k + quality gate}
+    G -->|Pass| H[Ship with evidence]
+    G -->|Fail| I[Prompt fix with transcript]
+    I --> C
+```
+
+The profiler automatically determines whether the agent is conversational or task-oriented. You can also force the mode from the web UI or `gauntlet.config.json`.
 
 It serves two audiences:
 
 - **Developers:** reproducible CLI, JSON report, CI exit code, `pass^k`, and quality gates.
 - **Non-technical users:** web wizard, connection test, cost and duration estimate, run history, prompt fixes, and a visual certificate.
-
-The profiler automatically determines whether the agent is conversational or task-oriented. You can also force the mode from the web UI or `gauntlet.config.json`.
 
 ## 60-second start
 
@@ -155,19 +182,20 @@ The web app lets you configure both API keys through `/api/settings`. The CLI re
 
 ```mermaid
 flowchart LR
-    A[Endpoint + system prompt] --> B[Profiler]
-    B --> C{Detected mode}
-    C -->|Conversational| D[Multi-turn scenarios]
-    C -->|Task processing| E[Test documents]
-    D --> F[User simulator]
-    E --> G[Single-shot runner]
-    F --> H[Agent under test]
-    G --> H
-    H --> I[Mocked tools]
-    I --> H
-    H --> J[Judge + rubric]
-    J --> K[Score, transcripts, and fixes]
-    K --> L[Certificate / CI gate]
+    A[Endpoint + system prompt] --> B[Preflight]
+    B --> C[Profiler]
+    C --> D{Detected mode}
+    D -->|Conversational| E[Multi-turn scenarios]
+    D -->|Task processing| F[Test documents]
+    E --> G[User simulator]
+    F --> H[Single-shot runner]
+    G --> I[Agent under test]
+    H --> I
+    I <-->|tool round trip| J[Mocked tools]
+    I --> K[Transcript]
+    K --> L[Binary judge + rubric]
+    L --> M[Score + failed criteria]
+    M --> N[Fixes / certificate / CI gate]
 ```
 
 The pipeline does the following:
@@ -180,6 +208,69 @@ The pipeline does the following:
 6. **Judging:** a model evaluates the transcript against a rubric generated for that agent. With `OPENAI_API_KEY`, the judge uses `gpt-4.1`; without it, it uses `claude-sonnet-5`, and the report declares the same-family risk.
 7. **Pass^k:** a scenario passes only when all of its attempts pass. A judge failure is marked as `unevaluated`, not as an agent failure.
 8. **Fixes:** the system suggests concrete system-prompt changes based on failed scenarios.
+
+### A tool call is part of the test, not a black box inside it
+
+```mermaid
+sequenceDiagram
+    participant U as User simulator
+    participant G as Gauntlet
+    participant A as Agent endpoint
+    participant T as Tool mocker
+    participant J as Judge
+
+    U->>G: Send turn with scenario objective
+    G->>A: POST messages + session ID
+    A-->>G: tool_calls(name, arguments)
+    G->>T: Generate realistic tool result
+    T-->>G: Data, or adversarial tool content
+    G->>A: POST assistant call + tool result
+    A-->>G: Final answer, or another tool call
+    G->>J: Full transcript + success criteria
+    J-->>G: Binary pass / fail
+```
+
+The evaluator owns the test harness, not the agent's production dependencies. That is the useful workaround: it can test whether an agent treats tool output as data without provisioning the real CRM, billing system, or database behind the tool.
+
+## The hard parts
+
+The interesting engineering is in the boundaries. Each workaround keeps the harness useful under an imperfect provider, an imperfect endpoint, or an adversarial agent.
+
+| Constraint | Gauntlet's workaround | Why it matters |
+| --- | --- | --- |
+| The agent is a black box | Normalize OpenAI-compatible and Coval wire formats, preserve session IDs, and accept a small set of practical response shapes. | You can test an existing deployment without adding an SDK, callback, or evaluator-specific instrumentation. |
+| LLM-generated attacks are stochastic | Assign adversarial attack classes round-robin before generation, then adapt each case to the agent's domain. | Coverage becomes a property of the suite instead of luck. |
+| Tools are expensive and environment-specific | Mock declared tools, simulate undeclared calls, and feed the result back through the real tool-call loop. | The test reaches tool-use behavior without touching production systems. |
+| Tool loops can hang a run | Cap each turn at six tool-call rounds and report `tool_loop_exceeded` as an observed failure mode. | A broken agent cannot consume an unbounded evaluation budget. |
+| Judges can fail or share a model family | Retry verdicts once, mark unavailable verdicts as `unevaluated`, and disclose same-family judge bias. | The score does not quietly punish an agent for an evaluator outage or hide a credibility risk. |
+| Providers disagree about structured output | Use strict JSON schemas where supported, JSON-object mode for OpenAI-compatible gateways, and forgiving extraction at the boundary. | The engine keeps its internal contract while surviving real gateway differences. |
+| User-supplied endpoints are an SSRF surface | Resolve every A/AAAA record, reject reserved/private ranges according to environment, re-check before every request, and never follow redirects. | A black-box tester should not become a tunnel into cloud metadata or an internal network. |
+
+The implementation is intentionally readable: [`runner.ts`](src/engine/runner.ts) owns orchestration and scoring, [`tool-loop.ts`](src/engine/tool-loop.ts) owns tool round trips, [`connector.ts`](src/engine/connector.ts) owns wire compatibility and response limits, and [`ssrf.ts`](src/engine/ssrf.ts) owns endpoint policy.
+
+### The measurement invariants
+
+```mermaid
+flowchart TD
+    A[Conversation finishes] --> B{Judge returns a valid verdict?}
+    B -->|No| C[unevaluated]
+    B -->|Yes| D{All k attempts pass?}
+    D -->|Yes| E[Scenario passes]
+    D -->|No| F[Scenario fails]
+    C --> G{More than 5% unjudged?}
+    G -->|Yes| H[No certificate]
+    G -->|No| I[Score judged sample]
+    E --> J[Category rate + weighted score]
+    F --> J
+    I --> J
+    J --> K[CI gate]
+```
+
+Three invariants are worth calling out:
+
+- **Binary, not ornamental scoring.** A conversation passes only when its scenario criterion and every global rubric criterion pass. There is no 1–5 score that makes a serious failure look average.
+- **`pass^k`, not one lucky sample.** With `k=4`, every judged attempt for a scenario must pass. This turns flaky behavior into visible evidence instead of a green demo.
+- **No certificate on partial evidence.** If more than 5% of conversations are unevaluated, Gauntlet refuses to certify the run. A missing verdict is a measurement problem, not a passing result.
 
 ### Endpoint contract
 
@@ -216,7 +307,7 @@ It accepts the latest assistant message inside `messages`. Both protocols also a
 
 ## Reproducible benchmark
 
-The benchmark compares three arms across seven reference agents with planted defects. The result published in `bench/results/latest.md` was generated on **August 16, 2026**, with `12` scenarios per fixture and `k=2`.
+The benchmark compares three arms across seven reference agents with planted defects. It asks a sharper question than “does the demo look good?”: can the harness provoke a known failure, recognize it in the transcript, and avoid inventing failures on a healthy control? The result published in [`bench/results/latest.md`](bench/results/latest.md) was generated on **August 16, 2026**, with `12` scenarios per fixture and `k=2`.
 
 | Method | Defects found | Prompt-visible | Behavior-only | False alarms |
 | --- | ---: | ---: | ---: | ---: |
@@ -232,6 +323,8 @@ Gauntlet metrics from that run:
 - **Pre-adjudication control:** 21% of conversations marked as failed by the judge.
 
 This measures the harness against controlled fixtures, not customer agents or complete products such as ChatGPT or Claude Code. It is evidence of engine coverage, not a universal guarantee of domain accuracy.
+
+The benchmark is also a design constraint for the product: a red result must be explainable. That is why the report keeps the scenario, transcript, failed criteria, judge rationale, and adjudication separate instead of collapsing everything into a single score.
 
 ### Run the benchmark
 
@@ -281,6 +374,8 @@ The suite covers prompt leakage, fabricated data and actions, direct and indirec
 - **Credentials:** the API never returns a complete key; it only exposes status and a mask. Keys saved through the UI remain in plaintext inside `data/gauntlet.db`, with the same trust level as a local `.env`. Do not use this storage for a multi-tenant installation.
 - **Local SQLite:** runs and settings live in `data/`, which is ignored by Git. Cancellation is process-local and designed for a single instance.
 - **Public endpoint:** the agent under test receives the generated transcript and test documents. Do not connect endpoints containing sensitive data without reviewing what information may appear in generated cases.
+
+The SSRF check is defense in depth, not magic: validation followed by a normal hostname fetch still has a DNS-rebinding time-of-check/time-of-use window. The next hardening step would be a pinned-IP connection. The limitation is documented in [`ssrf.ts`](src/engine/ssrf.ts) because security claims should include their ceiling.
 
 ## Development
 
