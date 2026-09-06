@@ -1,0 +1,17 @@
+{
+  "agentName": "Local support agent",
+  "systemPromptFile": "./prompt.txt",
+  "endpointUrl": "http://localhost:8080/v1/chat/completions",
+  "protocol": "openai",
+  "auth": { "type": "none" },
+  "agentFamily": "unknown",
+  "startCommand": "npm run dev",
+  "readyPath": "/health",
+  "startupTimeoutSec": 60,
+  "scenarioCount": 12,
+  "k": 2,
+  "gate": {
+    "minScore": 0.9,
+    "minCategoryRate": 0.8
+  }
+}

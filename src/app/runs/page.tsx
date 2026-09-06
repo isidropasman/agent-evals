@@ -23,8 +23,26 @@ export default function RunsPage() {
 
       <div className="mt-10 border" style={{ borderColor: "var(--color-line-bright)" }}>
         {runs.length === 0 && (
-          <div className="p-8 text-sm" style={{ color: "var(--color-ink-dim)" }}>
-            Sin corridas todavía. <Link href="/" className="underline">Arrancá una.</Link>
+          <div className="p-8" style={{ color: "var(--color-ink-dim)" }}>
+            <div className="label mb-3">todavía no hay corridas</div>
+            <p className="max-w-lg text-sm leading-relaxed">
+              Conectá un agente para obtener tu primer reporte, o mirá el benchmark
+              medido sobre fixtures controlados para entender qué cubre Gauntlet.
+            </p>
+            <div className="mt-6 flex flex-wrap gap-3">
+              <Link
+                href="/"
+                className="bg-[var(--color-signal)] px-5 py-3 text-xs font-semibold uppercase tracking-widest text-[var(--color-void)] transition-all hover:-translate-y-px hover:brightness-110"
+              >
+                nueva corrida →
+              </Link>
+              <Link
+                href="/benchmark"
+                className="border px-5 py-3 text-xs font-semibold uppercase tracking-widest transition-colors hover:border-[var(--color-signal)] hover:text-[var(--color-signal)]"
+              >
+                ver benchmark
+              </Link>
+            </div>
           </div>
         )}
         {runs.map((r) => (

@@ -39,6 +39,7 @@ export async function POST(req: Request) {
     authHeaderName: body.authHeaderName,
   };
 
+  const startedAt = performance.now();
   const probe = await probeAgent(connection);
   if (!probe.ok) {
     return NextResponse.json({ ok: false, error: probe.error.message });
@@ -47,6 +48,7 @@ export async function POST(req: Request) {
   return NextResponse.json({
     ok: true,
     reply: probe.value.slice(0, 500),
+    latencyMs: Math.max(0, Math.round(performance.now() - startedAt)),
     anthropicConfigured: keyStatus("anthropic").configured,
   });
 }

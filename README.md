@@ -190,6 +190,30 @@ pnpm dev
 
 The web flow can run against the intentionally flawed demo agent included in the repository.
 
+The demo removes the need to connect your own agent, but a full LLM-backed evaluation still requires `ANTHROPIC_API_KEY`. Without credentials, you can validate the UI, connection flow, and mock benchmark only.
+
+### Evidence from the running app
+
+These captures come from the current local build. They show the real onboarding and benchmark routes; they are not product mockups. The current web UI uses Spanish labels, while the CLI and repository documentation are in English.
+
+<details>
+<summary>Open the onboarding screen</summary>
+
+<p align="center">
+  <img src="docs/assets/onboarding.png" alt="Gauntlet onboarding screen with endpoint setup and demo agent entry point" />
+</p>
+</details>
+
+<details>
+<summary>Open the benchmark screen</summary>
+
+<p align="center">
+  <img src="docs/assets/benchmark.png" alt="Gauntlet benchmark screen with fixture comparison and measured metrics" />
+</p>
+</details>
+
+The benchmark page is backed by the checked-in [`bench/results/latest.json`](bench/results/latest.json). No credentialed run result is checked in: a report would depend on an external agent endpoint and provider keys, so this README does not present a fabricated transcript.
+
 For CI:
 
 ```bash
@@ -222,6 +246,10 @@ A minimal config:
   }
 }
 ```
+
+The same example is checked in at [`docs/examples/gauntlet.config.json`](docs/examples/gauntlet.config.json), with its prompt in [`docs/examples/prompt.txt`](docs/examples/prompt.txt). Copy both files into an agent repository, then change the endpoint, startup command, and prompt.
+
+The CLI can start the agent with `startCommand`, wait for `readyPath`, shut down the process, and write `gauntlet-report.json`. `ANTHROPIC_API_KEY` is required for real runs; `OPENAI_API_KEY` is optional and moves the judge to another model family.
 
 ## Stack
 
