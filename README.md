@@ -18,9 +18,11 @@ Gauntlet treats a deployed agent as a system to be tested under pressure: profil
 
 </div>
 
-| Planted defects found | Judge recall | Instrumentation | Protocols |
-| ---: | ---: | ---: | ---: |
-| **7 / 7** | **98%** | **0** | **2** |
+| Planted defects found | Judge recall | Adjudicated false positives | Instrumentation | Protocols |
+| ---: | ---: | ---: | ---: | ---: |
+| **7 / 7** | **98%** | **13%** | **0** | **2** |
+
+> Benchmark: 12 scenarios × `k=2`, judged with GPT-4.1. The committed result includes both the strong result **and** the measurement failure: 3 control conversations were false positives after adjudication. [Read the benchmark report →](bench/results/latest.md)
 
 > **The interesting problem isn't generating adversarial prompts. It's building a measurement system you can trust when the agent, the judge, the provider, and the network are all imperfect.**
 
@@ -34,7 +36,7 @@ It is built around six ideas:
 - **Adversarial coverage over lucky generations** — explicitly cover prompt leakage, injection, hallucination bait, authority pressure, scope creep, social pressure and tool-result injection.
 - **Measurement over vibes** — binary verdicts, explicit rubrics, `pass^k`, category floors and first-class `unevaluated` states.
 - **Tools are part of the attack surface** — simulate tool round-trips and inject untrusted content through tool results.
-- **Evaluator failures are measurement failures** — a judge outage must not silently become an agent failure.
+- **Evaluator failures are measurement failures** — a judge outage or false positive must be visible, not silently converted into confidence.
 - **Failures should be reproducible** — preserve transcripts, criteria, rationales and suggested fixes so a red evaluation becomes a debugging artifact.
 
 ## The system
@@ -67,7 +69,7 @@ This is where most of the engineering went.
 | **Generated attacks are stochastic** | Assign adversarial classes before generation, then adapt each attack to the agent domain. | Coverage is a property of the suite, not of what the model happened to remember. |
 | **Agents use external tools** | Mock declared tools, simulate undeclared calls and feed results back through the real tool loop. | Tool behavior can be tested without provisioning production dependencies. |
 | **Tool loops can run forever** | Bound tool-call rounds and surface `tool_loop_exceeded` as an observed failure. | A broken agent cannot consume an unbounded evaluation budget. |
-| **LLM judges are imperfect** | Retry invalid verdicts, separate `unevaluated` from `failed`, and expose same-family judge risk. | Measurement infrastructure should not manufacture failures. |
+| **LLM judges are imperfect** | Retry invalid verdicts, separate `unevaluated` from `failed`, expose same-family judge risk, and keep adjudicated control failures visible. | Measurement infrastructure should not manufacture confidence. |
 | **Providers disagree on structured output** | Keep strict internal contracts but use provider-specific output modes and forgiving parsing at the boundary. | Reliability survives gateway differences without weakening the core model. |
 | **Arbitrary endpoints create an SSRF surface** | Resolve DNS, reject reserved/private ranges according to policy, re-check requests and refuse redirects. | An evaluator must not become a tunnel into internal infrastructure. |
 
@@ -163,11 +165,20 @@ The parts I cared most about were not the UI or the prompt templates. They were 
 
 The goal was not to build another leaderboard. It was to build a harness I would actually want between an agent and production.
 
-## Reproducible benchmark
+## Reproduce the benchmark
 
-The headline numbers above come from the benchmark included in this repository. The benchmark uses intentionally flawed agents / planted defects and evaluates whether the harness detects those failures. The purpose is not to claim a universal agent-safety score; it is to make Gauntlet's own detection behavior inspectable and repeatable.
+The headline numbers come from the benchmark committed in this repository. It uses intentionally flawed agents / planted defects and measures whether the harness detects those failures. It is a test of **Gauntlet's detection behavior**, not a universal agent-safety score.
 
-See [`bench/`](bench/) and the benchmark route in the web app for the underlying cases and results.
+Start here:
+
+- [`bench/results/latest.md`](bench/results/latest.md) — human-readable committed result, including false positives.
+- [`bench/results/latest.json`](bench/results/latest.json) — full machine-readable evidence.
+- [`bench/fixtures.ts`](bench/fixtures.ts) — planted defects and benchmark fixtures.
+- [`bench/run.ts`](bench/run.ts) — benchmark execution.
+- [`bench/score.ts`](bench/score.ts) — scoring.
+- [`bench/adjudicate.ts`](bench/adjudicate.ts) — control-failure adjudication.
+
+The current committed run found all 7 planted defects and reached 98% judge recall, but also produced a 13% adjudicated false-positive rate on healthy-control conversations. **That limitation is part of the result.** A test harness that hides its own measurement errors is not trustworthy.
 
 ## Run it
 
