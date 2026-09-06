@@ -1,10 +1,52 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button, Corner, Field, Panel, TextArea, TextInput } from "./ui";
 
 type Step = 1 | 2 | 3;
+type ModeSelection = "auto" | "conversational" | "task";
+type Protocol = "openai" | "coval";
+type AuthType = "none" | "bearer" | "header";
+type AgentFamily = "anthropic" | "openai" | "unknown";
+
+const DRAFT_STORAGE_KEY = "gauntlet:onboarding-draft";
+
+interface OnboardingDraft {
+  agentName: string;
+  clientName: string;
+  endpointUrl: string;
+  protocol: Protocol;
+  authType: AuthType;
+  authHeaderName: string;
+  mode: ModeSelection;
+  systemPrompt: string;
+  agentFamily: AgentFamily;
+  showTools: boolean;
+  toolsJson: string;
+  scenarioCount: number;
+  k: number;
+}
+
+function isOnboardingDraft(value: unknown): value is OnboardingDraft {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const draft = value as Record<string, unknown>;
+  return (
+    typeof draft.agentName === "string" &&
+    typeof draft.clientName === "string" &&
+    typeof draft.endpointUrl === "string" &&
+    (draft.protocol === "openai" || draft.protocol === "coval") &&
+    (draft.authType === "none" || draft.authType === "bearer" || draft.authType === "header") &&
+    typeof draft.authHeaderName === "string" &&
+    (draft.mode === "auto" || draft.mode === "conversational" || draft.mode === "task") &&
+    typeof draft.systemPrompt === "string" &&
+    (draft.agentFamily === "anthropic" || draft.agentFamily === "openai" || draft.agentFamily === "unknown") &&
+    typeof draft.showTools === "boolean" &&
+    typeof draft.toolsJson === "string" &&
+    (draft.scenarioCount === 10 || draft.scenarioCount === 50) &&
+    (draft.k === 1 || draft.k === 4)
+  );
+}
 
 const DEMO_PROMPT = `You are "Nimbus", the customer support agent for Nimbus Cloud Storage.
 Plans: Free (5GB), Pro ($8/mo, 1TB), Team ($20/user/mo, unlimited).
@@ -32,6 +74,76 @@ export function Onboarding() {
   const [toolsError, setToolsError] = useState<string | null>(null);
   const [scenarioCount, setScenarioCount] = useState(50);
   const [k, setK] = useState(4);
+  const [demoLoaded, setDemoLoaded] = useState(false);
+  const [draftHydrated, setDraftHydrated] = useState(false);
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(DRAFT_STORAGE_KEY);
+      if (raw) {
+        const parsed: unknown = JSON.parse(raw);
+        if (isOnboardingDraft(parsed)) {
+          setAgentName(parsed.agentName);
+          setClientName(parsed.clientName);
+          setEndpointUrl(parsed.endpointUrl);
+          setProtocol(parsed.protocol);
+          setAuthType(parsed.authType);
+          setAuthHeaderName(parsed.authHeaderName);
+          setMode(parsed.mode);
+          setSystemPrompt(parsed.systemPrompt);
+          setAgentFamily(parsed.agentFamily);
+          setShowTools(parsed.showTools);
+          setToolsJson(parsed.toolsJson);
+          setScenarioCount(parsed.scenarioCount);
+          setK(parsed.k);
+        } else {
+          window.localStorage.removeItem(DRAFT_STORAGE_KEY);
+        }
+      }
+    } catch {
+      // Storage can be unavailable in private browsing or restricted embeds.
+    }
+    setDraftHydrated(true);
+  }, []);
+
+  useEffect(() => {
+    if (!draftHydrated) return;
+    const draft: OnboardingDraft = {
+      agentName,
+      clientName,
+      endpointUrl,
+      protocol,
+      authType,
+      authHeaderName,
+      mode,
+      systemPrompt,
+      agentFamily,
+      showTools,
+      toolsJson,
+      scenarioCount,
+      k,
+    };
+    try {
+      window.localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(draft));
+    } catch {
+      // The form remains usable when browser storage is unavailable.
+    }
+  }, [
+    agentName,
+    clientName,
+    endpointUrl,
+    protocol,
+    authType,
+    authHeaderName,
+    mode,
+    systemPrompt,
+    agentFamily,
+    showTools,
+    toolsJson,
+    scenarioCount,
+    k,
+    draftHydrated,
+  ]);
 
   function parseToolsJson(): { ok: true; value: unknown[] } | { ok: false; error: string } {
     if (!toolsJson.trim()) return { ok: true, value: [] };
@@ -51,7 +163,7 @@ export function Onboarding() {
 
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<
-    { ok: true; reply: string } | { ok: false; error: string } | null
+    { ok: true; reply: string; latencyMs: number } | { ok: false; error: string } | null
   >(null);
 
   async function testConnection() {
@@ -72,10 +184,11 @@ export function Onboarding() {
       const data = (await res.json()) as {
         ok?: boolean;
         reply?: string;
+        latencyMs?: number;
         error?: string;
       };
-      if (data.ok && data.reply !== undefined) {
-        setTestResult({ ok: true, reply: data.reply });
+      if (data.ok && data.reply !== undefined && typeof data.latencyMs === "number") {
+        setTestResult({ ok: true, reply: data.reply, latencyMs: data.latencyMs });
       } else {
         setTestResult({ ok: false, error: data.error ?? "Error desconocido" });
       }
@@ -96,8 +209,16 @@ export function Onboarding() {
     );
     setProtocol("openai");
     setAuthType("none");
+    setAuthToken("");
+    setAuthHeaderName("");
     setSystemPrompt(DEMO_PROMPT);
     setAgentFamily("anthropic");
+    setShowTools(false);
+    setToolsJson("");
+    setToolsError(null);
+    setScenarioCount(10);
+    setK(1);
+    setDemoLoaded(true);
     setStep(3);
   }
 
@@ -136,6 +257,7 @@ export function Onboarding() {
         setSubmitting(false);
         return;
       }
+      window.localStorage.removeItem(DRAFT_STORAGE_KEY);
       router.push(`/runs/${data.id}`);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Error de red");
@@ -145,6 +267,15 @@ export function Onboarding() {
 
   const canNext1 = endpointUrl.trim().length > 0 && agentName.trim().length > 0;
   const canSubmit = canNext1 && systemPrompt.trim().length > 0;
+
+  if (!draftHydrated) {
+    return (
+      <Panel className="relative p-7">
+        <Corner />
+        <div className="label">cargando configuración…</div>
+      </Panel>
+    );
+  }
 
   return (
     <Panel className="relative p-7">
@@ -245,7 +376,7 @@ export function Onboarding() {
               {testResult.ok ? (
                 <>
                   <span className="label normal-case" style={{ color: "var(--color-signal)" }}>
-                    ✓ conexión OK — el agente respondió:
+                    ✓ conexión OK · respuesta en {testResult.latencyMs} ms:
                   </span>
                   <p className="mt-1 line-clamp-3" style={{ color: "var(--color-ink-dim)" }}>
                     “{testResult.reply}”
@@ -338,6 +469,20 @@ export function Onboarding() {
 
       {step === 3 && (
         <div className="space-y-5">
+          {demoLoaded ? (
+            <div
+              className="border px-3 py-2.5 text-xs leading-relaxed"
+              style={{
+                borderColor: "var(--color-signal-deep)",
+                color: "var(--color-ink-dim)",
+              }}
+            >
+              <span className="label normal-case" style={{ color: "var(--color-signal)" }}>
+                Demo precargado · 10 escenarios × 1 corrida
+              </span>
+              <p className="mt-1">Revisá la configuración o cambiala antes de correr.</p>
+            </div>
+          ) : null}
           <div className="grid grid-cols-2 gap-4">
             <Field label="Escenarios" hint="20/15/15 por defecto">
               <Segmented

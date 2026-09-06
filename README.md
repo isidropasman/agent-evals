@@ -8,7 +8,7 @@
 
 Your agent can look safe in a demo and still fail under pressure. Gauntlet turns the deployed endpoint into a repeatable test surface: it learns the agent's boundaries, generates targeted scenarios, exercises real conversations, and produces evidence you can act on before a user finds the bug.
 
-<a href="#60-second-start">60-second start</a> · <a href="#why-gauntlet">Why Gauntlet</a> · <a href="#how-it-evaluates">How it evaluates</a> · <a href="#reproducible-benchmark">Benchmark</a>
+<a href="#60-second-start">60-second start</a> · <a href="#evidence-from-the-running-app">Evidence</a> · <a href="#why-gauntlet">Why Gauntlet</a> · <a href="#how-it-evaluates">How it evaluates</a> · <a href="#reproducible-benchmark">Benchmark</a>
 
 <br />
 
@@ -18,6 +18,8 @@ Your agent can look safe in a demo and still fail under pressure. Gauntlet turns
 
 > [!IMPORTANT]
 > Gauntlet tests the behavior of the deployed agent, but uses the `system prompt` to understand the domain and design scenarios. You need a compatible HTTP endpoint and an Anthropic API key to generate and evaluate the suite. An OpenAI key is optional and moves the judge to a different model family.
+
+Published benchmark context: controlled reference fixtures, `12` scenarios per fixture, `k=2`, generated **August 16, 2026**. The raw result and methodology are linked in [Reproducible benchmark](#reproducible-benchmark).
 
 | Planted defects found | Judge recall | Instrumentation required | Wire protocols |
 | ---: | ---: | ---: | ---: |
@@ -86,9 +88,33 @@ Open [http://localhost:3000](http://localhost:3000). In the wizard:
 
 You can also click **try demo agent** to run the flow against an intentionally flawed agent included at `/api/demo-agent`.
 
+The bundled demo removes the need to connect your own agent, but a full LLM-backed evaluation still needs `ANTHROPIC_API_KEY`. Without credentials, you can validate the UI, connection flow, and mock benchmark only.
+
 ### 3. Read the result
 
 The run displays the detected profile, phase-by-phase progress, weighted score, failed scenarios, transcripts, unmet criteria, suggested fixes, and the option to issue a certificate. Run history is available at `/runs`; the product benchmark lives at `/benchmark`.
+
+## Evidence from the running app
+
+These captures come from the current local build. They show the real onboarding and benchmark routes; they are not product mockups. The current web UI uses Spanish labels, while the CLI and repository documentation are in English.
+
+<details>
+<summary>Open the onboarding screen</summary>
+
+<p align="center">
+  <img src="docs/assets/onboarding.png" alt="Gauntlet onboarding screen with endpoint setup and demo agent entry point" />
+</p>
+</details>
+
+<details>
+<summary>Open the benchmark screen</summary>
+
+<p align="center">
+  <img src="docs/assets/benchmark.png" alt="Gauntlet benchmark screen with fixture comparison and measured metrics" />
+</p>
+</details>
+
+The benchmark page is backed by the checked-in [`bench/results/latest.json`](bench/results/latest.json). No credentialed run result is checked in: a report would depend on the external agent endpoint and provider keys, so this README does not present a fabricated transcript.
 
 ## CI CLI
 
@@ -125,6 +151,8 @@ Save the prompt in `prompt.txt` and run:
 ```bash
 pnpm gauntlet run
 ```
+
+The same example is checked in at [`docs/examples/gauntlet.config.json`](docs/examples/gauntlet.config.json), with its prompt in [`docs/examples/prompt.txt`](docs/examples/prompt.txt). Copy both files into an agent repository, then change the endpoint, startup command, and prompt for the first local run.
 
 The CLI can start the agent with `startCommand`, wait for `readyPath`, and shut down the process when it finishes. It writes `gauntlet-report.json` to the current directory.
 
@@ -182,21 +210,30 @@ The web app lets you configure both API keys through `/api/settings`. The CLI re
 
 ```mermaid
 flowchart LR
-    A[Endpoint + system prompt] --> B[Preflight]
-    B --> C[Profiler]
-    C --> D{Detected mode}
-    D -->|Conversational| E[Multi-turn scenarios]
-    D -->|Task processing| F[Test documents]
-    E --> G[User simulator]
-    F --> H[Single-shot runner]
-    G --> I[Agent under test]
-    H --> I
-    I <-->|tool round trip| J[Mocked tools]
-    I --> K[Transcript]
-    K --> L[Binary judge + rubric]
-    L --> M[Score + failed criteria]
-    M --> N[Fixes / certificate / CI gate]
+    subgraph Local[Gauntlet process]
+        UI[Web wizard or CLI] --> R[Runner + scoring]
+        R --> C[Connector + SSRF policy]
+        R --> G[Profiler + scenario generator]
+        R --> S[Simulator + tool mocker]
+        R --> J[Binary judge + rubric]
+        R --> DB[(Local SQLite)]
+        R --> O[Report, certificate, CI exit code]
+    end
+
+    subgraph External[External boundaries]
+        A[User-provided agent endpoint]
+        P[Anthropic generation, simulation, fixes]
+        Q[Optional OpenAI-compatible judge]
+    end
+
+    C <--> A
+    G --> P
+    S --> P
+    J --> P
+    J -. cross-family judge .-> Q
 ```
+
+The evaluator owns the harness boundary and local run data. It does not provision or execute the agent's production tools: the connector talks to the endpoint, while the tool mocker supplies test results inside the conversation.
 
 The pipeline does the following:
 

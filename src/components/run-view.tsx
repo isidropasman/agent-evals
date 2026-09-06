@@ -272,7 +272,10 @@ function ResultsView({
               <Panel key={i} className="p-6">
                 <div className="mb-3 flex items-start justify-between gap-4">
                   <p className="text-sm font-semibold">{fix.problem}</p>
-                  <span className="label shrink-0">{fix.scenarioIds.length} escenarios</span>
+                  <div className="flex shrink-0 items-center gap-3">
+                    <span className="label">{fix.scenarioIds.length} escenarios</span>
+                    <CopyFixButton value={fix.diff} />
+                  </div>
                 </div>
                 <pre
                   className="overflow-x-auto border bg-[var(--color-void)] p-4 text-xs leading-relaxed"
@@ -292,6 +295,31 @@ function ResultsView({
       {/* failure explorer */}
       <FailureExplorer results={report.scenarioResults} />
     </div>
+  );
+}
+
+function CopyFixButton({ value }: { value: string }) {
+  const [status, setStatus] = useState<"idle" | "copied" | "error">("idle");
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(value);
+      setStatus("copied");
+      window.setTimeout(() => setStatus("idle"), 1600);
+    } catch {
+      setStatus("error");
+    }
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() => void copy()}
+      className="border px-2.5 py-1.5 text-[0.65rem] font-semibold uppercase tracking-wider transition-colors hover:border-[var(--color-signal)] hover:text-[var(--color-signal)]"
+      aria-live="polite"
+    >
+      {status === "copied" ? "copiado" : status === "error" ? "no se pudo copiar" : "copiar fix"}
+    </button>
   );
 }
 
