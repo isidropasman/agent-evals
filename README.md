@@ -59,6 +59,34 @@ The harness first infers what the agent is supposed to do and where it can fail.
 
 The same engine powers a web UI and a CLI/CI workflow.
 
+## Fleet dashboard
+
+The web UI at [`/dashboard`](http://localhost:3000/dashboard) lets you register multiple agent endpoints and run the same eval preset against the whole fleet. Each run keeps its `agent_id`, so the dashboard can show the latest signal and an eight-run trend per target without scraping reports or mixing unrelated histories.
+
+```mermaid
+flowchart LR
+    R[(SQLite agents)] --> D[Dashboard DTO]
+    D --> O[Run one]
+    D --> B[Run all]
+    B --> Q[Queued runs]
+    Q --> S[Bounded scheduler · max 2]
+    S --> E[Existing runEval engine]
+    E --> H[(SQLite runs)]
+    H --> D
+```
+
+The important property is comparability: registration stores the endpoint, protocol, auth configuration, prompt, mode and tools once; execution converts that record into the existing `StartRunInput`. There is no second scoring implementation for batch mode. A single-agent run and a fleet run therefore share the profiler, scenario generation, tool loop, judge, `pass^k` scoring and certification gates.
+
+This is technically stronger than a dashboard that merely fires requests in parallel:
+
+- **Backpressure is explicit.** A batch persists every target as `queued` before work starts and runs at most two evaluations concurrently. Slow or rate-limited endpoints cannot multiply unbounded work.
+- **State is observable.** Queue, progress, completion and error are persisted per run, so a browser refresh does not erase what happened. The UI polls only while a target is active.
+- **The comparison is black-box.** Agents need only a supported endpoint; no SDK, callback or evaluator instrumentation is added to the system under test.
+- **Secrets stay server-side.** The public projection exposes auth configuration status and tool count, never the token or system prompt.
+- **Evidence stays attached.** The dashboard is a fleet index; each score links back to the existing full transcript, verdicts and fixes in `/runs/:id`.
+
+The current implementation is deliberately honest about its boundary: SQLite and the scheduler are process-local, which is a strong local/CI control plane but not yet a multi-region job system. Moving that boundary to a durable queue and shared database is the next scale step; it does not require changing the evaluation engine or its measurement invariants.
+
 ## The hard parts
 
 This is where most of the engineering went.
@@ -187,6 +215,8 @@ pnpm install
 # ANTHROPIC_API_KEY is required for real evaluation runs.
 pnpm dev
 ```
+
+Open `http://localhost:3000/dashboard` to register your fleet. Start with the quick preset (`10 scenarios × 1`) to compare endpoints, then use the existing full run flow for a credentialed `50 × 4` certification run.
 
 The web flow can run against the intentionally flawed demo agent included in the repository.
 

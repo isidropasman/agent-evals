@@ -15,7 +15,7 @@ interface RunData {
   id: string;
   agentName: string;
   clientName: string | null;
-  status: "running" | "done" | "error";
+  status: "queued" | "running" | "done" | "error";
   progress: RunProgress | null;
   report: RunReport | null;
   error: string | null;
@@ -45,7 +45,7 @@ export function RunView({ runId }: { runId: string }) {
         const json = (await res.json()) as RunData;
         if (!active) return;
         setData(json);
-        if (json.status === "running") {
+        if (json.status === "queued" || json.status === "running") {
           timer = setTimeout(poll, 1500);
         }
       } catch {
@@ -72,9 +72,9 @@ export function RunView({ runId }: { runId: string }) {
       {fetchError && <Notice tone="fail">{fetchError}</Notice>}
       {data?.status === "error" && <Notice tone="fail">Falló: {data.error}</Notice>}
 
-      {data?.status === "running" && (
-        <RunningView progress={data.progress} runId={runId} />
-      )}
+      {data?.status === "queued" || data?.status === "running" ? (
+        <RunningView progress={data.progress} runId={runId} queued={data.status === "queued"} />
+      ) : null}
 
       {data?.status === "done" && data.report && (
         <ResultsView runId={runId} report={data.report} clientName={data.clientName} />
@@ -99,9 +99,11 @@ function Notice({ children, tone }: { children: React.ReactNode; tone: "fail" })
 function RunningView({
   progress,
   runId,
+  queued = false,
 }: {
   progress: RunProgress | null;
   runId: string;
+  queued?: boolean;
 }) {
   const [cancelling, setCancelling] = useState(false);
   const pct = progress && progress.totalConversations > 0
@@ -128,13 +130,13 @@ function RunningView({
         <div className="scanning absolute inset-x-0 top-0 h-px" />
         <div className="label mb-4">
           <span className="blink" style={{ color: "var(--color-signal)" }}>●</span>{" "}
-          en ejecución
+          {queued ? "en cola" : "en ejecución"}
         </div>
         <h2 className="font-display text-4xl font-800">
-          {progress ? phaseLabel[progress.phase] : "Iniciando"}
+          {progress ? phaseLabel[progress.phase] : queued ? "Esperando scheduler" : "Iniciando"}
         </h2>
         <p className="mt-3 h-5 text-sm" style={{ color: "var(--color-ink-dim)" }}>
-          {progress?.message ?? "Levantando la corrida…"}
+          {progress?.message ?? (queued ? "Se libera cuando haya un slot disponible…" : "Levantando la corrida…")}
         </p>
 
         <div className="mt-10">
@@ -153,6 +155,9 @@ function RunningView({
         </div>
 
         <div className="mt-8">
+          {queued ? (
+            <div className="text-xs" style={{ color: "var(--color-ink-faint)" }}>El scheduler mantiene como máximo dos agentes corriendo.</div>
+          ) : (
           <button
             onClick={cancel}
             disabled={cancelling}
@@ -160,6 +165,7 @@ function RunningView({
           >
             {cancelling ? "cancelando…" : "cancelar corrida"}
           </button>
+          )}
         </div>
       </Panel>
     </div>

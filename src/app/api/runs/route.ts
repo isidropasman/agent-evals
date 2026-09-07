@@ -50,6 +50,7 @@ function parseTools(raw: unknown): ToolDefinition[] | null {
 export async function GET() {
   const runs = listRuns().map((r) => ({
     id: r.id,
+    agentId: r.agentId,
     agentName: r.agentName,
     clientName: r.clientName,
     status: r.status,

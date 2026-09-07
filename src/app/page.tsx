@@ -11,6 +11,9 @@ export default function Home() {
           <span className="label">/ agent proving ground</span>
         </div>
         <nav className="flex gap-6">
+          <Link href="/dashboard" className="label transition-colors hover:text-[var(--color-signal)]">
+            fleet ↗
+          </Link>
           <Link
             href="/benchmark"
             className="label transition-colors hover:text-[var(--color-signal)]"

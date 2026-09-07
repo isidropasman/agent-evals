@@ -14,6 +14,7 @@ export async function GET(
   }
   return NextResponse.json({
     id: run.id,
+    agentId: run.agentId,
     agentName: run.agentName,
     clientName: run.clientName,
     status: run.status,
