@@ -31,11 +31,6 @@ body {
   color: var(--color-ink);
   font-family: var(--font-mono);
   -webkit-font-smoothing: antialiased;
-  background-image:
-    linear-gradient(var(--color-line) 1px, transparent 1px),
-    linear-gradient(90deg, var(--color-line) 1px, transparent 1px);
-  background-size: 64px 64px;
-  background-position: -1px -1px;
 }
 
 /* faint vignette so the grid fades at the edges */

@@ -4,7 +4,11 @@ import type { AgentConnection } from "@/engine/connector";
 import { assertAllowedUrl } from "@/engine/ssrf";
 import type { ToolDefinition } from "@/engine/types";
 import { listRuns } from "@/server/db";
-import { startRun } from "@/server/run-store";
+import { startRunAsync } from "@/server/run-store";
+import { getDefaultWorkspace } from "@/server/workspace-store";
+import { sharedDatabaseEnabled } from "@/server/shared-db";
+import { sharedListRuns } from "@/server/shared-store";
+import { getSharedDefaultWorkspace } from "@/server/shared-workspace-store";
 
 export const runtime = "nodejs";
 
@@ -48,7 +52,9 @@ function parseTools(raw: unknown): ToolDefinition[] | null {
 }
 
 export async function GET() {
-  const runs = listRuns().map((r) => ({
+  const workspaceId = sharedDatabaseEnabled() ? (await getSharedDefaultWorkspace()).id : getDefaultWorkspace().id;
+  const source = sharedDatabaseEnabled() ? await sharedListRuns(workspaceId) : listRuns(workspaceId);
+  const runs = source.map((r) => ({
     id: r.id,
     agentId: r.agentId,
     agentName: r.agentName,
@@ -56,6 +62,7 @@ export async function GET() {
     status: r.status,
     score: r.report?.score ?? null,
     certified: r.report?.certified ?? null,
+    suite: r.report?.suite ?? null,
     createdAt: r.createdAt,
   }));
   return NextResponse.json({ runs });
@@ -69,9 +76,9 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "invalid json" }, { status: 400 });
   }
 
-  const agentName = body.agentName?.trim();
-  const endpointUrl = body.endpointUrl?.trim();
-  const systemPrompt = body.systemPrompt?.trim();
+  const agentName = optionalString(body.agentName);
+  const endpointUrl = optionalString(body.endpointUrl);
+  const systemPrompt = optionalString(body.systemPrompt);
 
   if (!agentName || !endpointUrl || !systemPrompt) {
     return NextResponse.json(
@@ -93,15 +100,24 @@ export async function POST(req: Request) {
     );
   }
 
+  if (body.protocol !== undefined && body.protocol !== "openai" && body.protocol !== "coval") return NextResponse.json({ error: "protocol inválido" }, { status: 400 });
+  if (body.authType !== undefined && body.authType !== "none" && body.authType !== "bearer" && body.authType !== "header") return NextResponse.json({ error: "authType inválido" }, { status: 400 });
+  if (body.authType === "header" && !optionalString(body.authHeaderName)) return NextResponse.json({ error: "authHeaderName es obligatorio con authType header" }, { status: 400 });
+  if (body.agentFamily !== undefined && body.agentFamily !== "anthropic" && body.agentFamily !== "openai" && body.agentFamily !== "unknown") return NextResponse.json({ error: "agentFamily inválido" }, { status: 400 });
+  if (body.mode !== undefined && body.mode !== "auto" && body.mode !== "conversational" && body.mode !== "task") return NextResponse.json({ error: "mode inválido" }, { status: 400 });
+  if (body.scenarioCount !== undefined && (!isFiniteInteger(body.scenarioCount) || body.scenarioCount < 1 || body.scenarioCount > 100)) return NextResponse.json({ error: "scenarioCount debe ser un entero entre 1 y 100" }, { status: 400 });
+  if (body.k !== undefined && (!isFiniteInteger(body.k) || body.k < 1 || body.k > 4)) return NextResponse.json({ error: "k debe ser un entero entre 1 y 4" }, { status: 400 });
+
   const connection: AgentConnection = {
     endpointUrl,
     protocol: body.protocol ?? "openai",
     authType: body.authType ?? "none",
-    authToken: body.authToken,
-    authHeaderName: body.authHeaderName,
+    authToken: optionalString(body.authToken),
+    authHeaderName: optionalString(body.authHeaderName),
   };
 
   const id = randomUUID();
+  const workspaceId = sharedDatabaseEnabled() ? (await getSharedDefaultWorkspace()).id : getDefaultWorkspace().id;
   const scenarioCount = body.scenarioCount;
   const config =
     scenarioCount && scenarioCount !== 50
@@ -110,9 +126,9 @@ export async function POST(req: Request) {
         ? { k: body.k }
         : undefined;
 
-  startRun(id, {
+  const started = await startRunAsync(id, {
     agentName,
-    clientName: body.clientName?.trim() || null,
+    clientName: optionalString(body.clientName) || null,
     connection,
     agentSystemPrompt: systemPrompt,
     agentFamily: body.agentFamily ?? "unknown",
@@ -120,8 +136,10 @@ export async function POST(req: Request) {
     mode: body.mode && body.mode !== "auto" ? body.mode : undefined,
     tools,
     config,
+    workspaceId,
   });
 
+  if (!started) return NextResponse.json({ error: "no se pudo crear la corrida" }, { status: 503 });
   return NextResponse.json({ id }, { status: 201 });
 }
 
@@ -136,3 +154,6 @@ function scaleMix(total: number, k?: number) {
     ...(k ? { k } : {}),
   };
 }
+
+function isFiniteInteger(value: unknown): value is number { return typeof value === "number" && Number.isFinite(value) && Number.isInteger(value); }
+function optionalString(value: unknown): string | undefined { return typeof value === "string" && value.trim() ? value.trim() : undefined; }

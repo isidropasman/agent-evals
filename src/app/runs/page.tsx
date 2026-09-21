@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { listRuns } from "@/server/db";
+import { getDefaultWorkspace } from "@/server/workspace-store";
 
 function fmt(ts: number): string {
   return new Date(ts).toISOString().slice(0, 16).replace("T", " ");
@@ -8,7 +9,7 @@ function fmt(ts: number): string {
 export const dynamic = "force-dynamic";
 
 export default function RunsPage() {
-  const runs = listRuns();
+  const runs = listRuns(getDefaultWorkspace().id);
   return (
     <main className="content mx-auto max-w-5xl px-6 pb-32">
       <header className="flex items-center justify-between border-b py-5">

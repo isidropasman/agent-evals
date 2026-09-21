@@ -1,14 +1,20 @@
 import { NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
+import { isTestSuite, type TestSuite } from "@/engine/suites";
 import { getAgent, listRuns } from "@/server/db";
+import { sharedDatabaseEnabled } from "@/server/shared-db";
+import { sharedGetAgent, sharedListRuns } from "@/server/shared-store";
+import { getSharedDefaultWorkspace } from "@/server/shared-workspace-store";
 import { runConfigForPreset, toStartRunInput } from "@/server/agent-store";
-import { startRun } from "@/server/run-store";
+import { startRunAsync } from "@/server/run-store";
+import { getDefaultWorkspace } from "@/server/workspace-store";
 
 export const runtime = "nodejs";
 
 interface RunPreset {
   scenarioCount: number;
   k: number;
+  suite: TestSuite;
 }
 
 export async function POST(
@@ -16,10 +22,15 @@ export async function POST(
   context: { params: Promise<{ id: string }> },
 ) {
   const { id: agentId } = await context.params;
-  const agent = getAgent(agentId);
+  const workspaceId = sharedDatabaseEnabled() ? (await getSharedDefaultWorkspace()).id : getDefaultWorkspace().id;
+  const agent = sharedDatabaseEnabled() ? await sharedGetAgent(agentId, workspaceId) : getAgent(agentId, workspaceId);
   if (!agent) return NextResponse.json({ error: "agent no encontrado" }, { status: 404 });
   if (!agent.active) return NextResponse.json({ error: "agent inactivo" }, { status: 409 });
-  if (listRuns().some((run) => run.agentId === agentId && (run.status === "queued" || run.status === "running"))) {
+  if (!agent.endpointUrl || !agent.systemPrompt) {
+    return NextResponse.json({ error: "este agent solo tiene traces observadas y no se puede ejecutar" }, { status: 409 });
+  }
+  const runs = sharedDatabaseEnabled() ? await sharedListRuns(workspaceId) : listRuns(workspaceId);
+  if (runs.some((run) => run.agentId === agentId && (run.status === "queued" || run.status === "running"))) {
     return NextResponse.json({ error: "este agent ya tiene un eval en cola o corriendo" }, { status: 409 });
   }
 
@@ -27,7 +38,8 @@ export async function POST(
   if (!preset.ok) return NextResponse.json({ error: preset.error }, { status: 400 });
 
   const id = randomUUID();
-  startRun(id, toStartRunInput(agent, runConfigForPreset(preset.value.scenarioCount, preset.value.k)));
+  const started = await startRunAsync(id, toStartRunInput(agent, runConfigForPreset(preset.value.scenarioCount, preset.value.k, preset.value.suite)));
+  if (!started) return NextResponse.json({ error: "no se pudo crear la corrida" }, { status: 503 });
   return NextResponse.json({ id, agentId }, { status: 201 });
 }
 
@@ -46,10 +58,11 @@ async function parsePreset(
   const body = raw as Record<string, unknown>;
   const scenarioCount = body.scenarioCount === undefined ? 10 : body.scenarioCount;
   const k = body.k === undefined ? 1 : body.k;
-  if (!isPresetNumber(scenarioCount, [10, 50]) || !isPresetNumber(k, [1, 4])) {
+  const suite = body.suite === undefined ? "balanced" : body.suite;
+  if (!isPresetNumber(scenarioCount, [10, 50]) || !isPresetNumber(k, [1, 4]) || !isTestSuite(suite)) {
     return { ok: false, error: "scenarioCount debe ser 10/50 y k debe ser 1/4" };
   }
-  return { ok: true, value: { scenarioCount, k } };
+  return { ok: true, value: { scenarioCount, k, suite } };
 }
 
 function isPresetNumber(value: unknown, allowed: readonly number[]): value is number {

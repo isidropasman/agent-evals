@@ -1,3 +1,5 @@
+import type { TestSuite } from "./suites";
+
 export type ScenarioCategory = "happy_path" | "edge_case" | "adversarial";
 
 /** Conversational agents (chat/voice/support) are tested by simulating a user
@@ -88,6 +90,7 @@ export interface CategoryScore {
 }
 
 export interface RunReport {
+  suite?: TestSuite;
   score: number;
   certified: boolean;
   categories: CategoryScore[];
@@ -141,6 +144,7 @@ export interface AgentProfile {
 }
 
 export interface RunConfig {
+  suite?: TestSuite;
   scenarioCount: number;
   mix: Record<ScenarioCategory, number>;
   k: number;
@@ -154,6 +158,7 @@ export interface RunConfig {
 }
 
 export const DEFAULT_RUN_CONFIG: RunConfig = {
+  suite: "balanced",
   scenarioCount: 50,
   mix: { happy_path: 20, edge_case: 15, adversarial: 15 },
   k: 4,

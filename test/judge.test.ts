@@ -108,7 +108,10 @@ describe("OpenAiProvider", () => {
     const result = await new OpenAiProvider("sk-test").complete(request);
     expect(calls).toBe(1);
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error.kind).toBe("provider_error");
+    if (!result.ok) {
+      expect(result.error.kind).toBe("provider_error");
+      expect(result.error.message).not.toContain("bad key");
+    }
   });
 });
 

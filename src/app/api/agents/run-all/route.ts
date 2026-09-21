@@ -1,8 +1,13 @@
 import { NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
+import { isTestSuite, type TestSuite } from "@/engine/suites";
 import { getAgent, listAgents, listRuns } from "@/server/db";
 import { runConfigForPreset, toStartRunInput } from "@/server/agent-store";
-import { startBatchRun, type BatchRunTask } from "@/server/run-store";
+import { startBatchRunAsync, type BatchRunTask } from "@/server/run-store";
+import { getDefaultWorkspace } from "@/server/workspace-store";
+import { sharedDatabaseEnabled } from "@/server/shared-db";
+import { sharedGetAgent, sharedListAgents, sharedListRuns } from "@/server/shared-store";
+import { getSharedDefaultWorkspace } from "@/server/shared-workspace-store";
 
 export const runtime = "nodejs";
 
@@ -16,9 +21,10 @@ export async function POST(req: Request) {
   const requestedIds = parseAgentIds(body.value);
   if (!requestedIds.ok) return NextResponse.json({ error: requestedIds.error }, { status: 400 });
 
+  const workspaceId = sharedDatabaseEnabled() ? (await getSharedDefaultWorkspace()).id : getDefaultWorkspace().id;
   const agents = requestedIds.value
-    ? requestedIds.value.map((id) => getAgent(id))
-    : listAgents().filter((agent) => agent.active);
+    ? await Promise.all(requestedIds.value.map((id) => sharedDatabaseEnabled() ? sharedGetAgent(id, workspaceId) : getAgent(id, workspaceId)))
+    : (sharedDatabaseEnabled() ? await sharedListAgents(workspaceId) : listAgents(workspaceId)).filter((agent) => agent.active);
   if (agents.some((agent) => !agent)) {
     return NextResponse.json({ error: "uno o más agents no existen" }, { status: 404 });
   }
@@ -29,9 +35,12 @@ export async function POST(req: Request) {
   if (selected.some((agent) => !agent.active)) {
     return NextResponse.json({ error: "no se puede ejecutar un agent inactivo" }, { status: 409 });
   }
+  if (selected.some((agent) => !agent.endpointUrl || !agent.systemPrompt)) {
+    return NextResponse.json({ error: "uno o más agents solo tienen traces observadas y no se pueden ejecutar" }, { status: 409 });
+  }
 
   const runningAgentIds = new Set(
-    listRuns()
+    (sharedDatabaseEnabled() ? await sharedListRuns(workspaceId) : listRuns(workspaceId))
       .filter((run) => (run.status === "queued" || run.status === "running") && run.agentId)
       .map((run) => run.agentId)
       .filter((agentId): agentId is string => agentId !== null),
@@ -44,12 +53,12 @@ export async function POST(req: Request) {
     );
   }
 
-  const config = runConfigForPreset(preset.value.scenarioCount, preset.value.k);
+  const config = runConfigForPreset(preset.value.scenarioCount, preset.value.k, preset.value.suite);
   const tasks: BatchRunTask[] = selected.map((agent) => ({
     id: randomUUID(),
     input: toStartRunInput(agent, config),
   }));
-  startBatchRun(tasks);
+  if (!await startBatchRunAsync(tasks)) return NextResponse.json({ error: "no se pudieron crear las corridas" }, { status: 503 });
   return NextResponse.json(
     { runIds: tasks.map((task) => task.id), queued: tasks.length, maxConcurrent: 2 },
     { status: 202 },
@@ -73,13 +82,14 @@ function parseAgentIds(
 
 function parsePreset(
   raw: Record<string, unknown>,
-): { ok: true; value: { scenarioCount: number; k: number } } | { ok: false; error: string } {
+): { ok: true; value: { scenarioCount: number; k: number; suite: TestSuite } } | { ok: false; error: string } {
   const scenarioCount = raw.scenarioCount === undefined ? 10 : raw.scenarioCount;
   const k = raw.k === undefined ? 1 : raw.k;
-  if (!isPresetNumber(scenarioCount, [10, 50]) || !isPresetNumber(k, [1, 4])) {
-    return { ok: false, error: "scenarioCount debe ser 10/50 y k debe ser 1/4" };
+  const suite = raw.suite === undefined ? "balanced" : raw.suite;
+  if (!isPresetNumber(scenarioCount, [10, 50]) || !isPresetNumber(k, [1, 4]) || !isTestSuite(suite)) {
+    return { ok: false, error: "scenarioCount debe ser 10/50, k debe ser 1/4 y suite debe ser válida" };
   }
-  return { ok: true, value: { scenarioCount, k } };
+  return { ok: true, value: { scenarioCount, k, suite } };
 }
 
 async function readBody(

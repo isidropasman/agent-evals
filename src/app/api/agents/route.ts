@@ -8,11 +8,22 @@ import {
   toPublicAgent,
   type CreateAgentInput,
 } from "@/server/agent-store";
+import { getDefaultWorkspace } from "@/server/workspace-store";
+import { getWorkspaceTraceStats } from "@/server/trace-store";
+import { sharedDatabaseEnabled } from "@/server/shared-db";
+import { createSharedAgent, getSharedAgentDashboard } from "@/server/shared-agent-store";
+import { getSharedTraceStats } from "@/server/shared-trace-store";
+import { getSharedDefaultWorkspace } from "@/server/shared-workspace-store";
 
 export const runtime = "nodejs";
 
 export async function GET() {
-  return NextResponse.json({ agents: getAgentDashboard() });
+  const workspaceId = sharedDatabaseEnabled() ? (await getSharedDefaultWorkspace()).id : getDefaultWorkspace().id;
+  if (sharedDatabaseEnabled()) return NextResponse.json({ agents: await getSharedAgentDashboard(workspaceId), observability: await getSharedTraceStats(workspaceId) });
+  return NextResponse.json({
+    agents: getAgentDashboard(workspaceId),
+    observability: getWorkspaceTraceStats(workspaceId),
+  });
 }
 
 export async function POST(req: Request) {
@@ -33,7 +44,9 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: urlCheck.error.message }, { status: 400 });
   }
 
-  const agent = createAgent(input.value);
+  const workspaceId = sharedDatabaseEnabled() ? (await getSharedDefaultWorkspace()).id : getDefaultWorkspace().id;
+  const agent = sharedDatabaseEnabled() ? await createSharedAgent(workspaceId, input.value) : createAgent(input.value);
+  if (!agent) return NextResponse.json({ error: "no se pudo guardar el agente" }, { status: 503 });
   return NextResponse.json({ agent: toPublicAgent(agent) }, { status: 201 });
 }
 

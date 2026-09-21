@@ -149,6 +149,7 @@ export async function runEval(
   providers: Providers,
 ): Promise<EngineResult<RunReport>> {
   const config: RunConfig = { ...DEFAULT_RUN_CONFIG, ...input.config };
+  const suite = config.suite ?? "balanced";
   const emit = input.onProgress ?? (() => {});
   const signal = input.signal;
   const totalConversations =
@@ -386,6 +387,7 @@ export async function runEval(
   const coverageOk =
     totalConversations > 0 && unevaluated / totalConversations <= 0.05;
   const report: RunReport = {
+    suite,
     score,
     certified:
       coverageOk && score >= 0.9 && categories.every((c) => c.rate >= 0.8),

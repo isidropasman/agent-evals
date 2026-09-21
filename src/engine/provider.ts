@@ -61,7 +61,7 @@ export class AnthropicProvider implements LlmProvider {
       if (error instanceof Anthropic.RateLimitError) {
         return {
           ok: false,
-          error: { kind: "provider_rate_limited", message: error.message },
+          error: { kind: "provider_rate_limited", message: "provider rate limit exceeded" },
         };
       }
       if (error instanceof Anthropic.APIError) {
@@ -69,7 +69,7 @@ export class AnthropicProvider implements LlmProvider {
           ok: false,
           error: {
             kind: "provider_error",
-            message: `API error ${error.status}: ${error.message}`,
+            message: `provider API error (HTTP ${error.status})`,
           },
         };
       }
@@ -77,7 +77,7 @@ export class AnthropicProvider implements LlmProvider {
         ok: false,
         error: {
           kind: "provider_error",
-          message: error instanceof Error ? error.message : String(error),
+          message: "provider request failed",
         },
       };
     }
@@ -143,8 +143,8 @@ export class OpenAiProvider implements LlmProvider {
       }
 
       if (!response.ok) {
-        const text = await response.text().catch(() => "");
-        lastError = `HTTP ${response.status}: ${text.slice(0, 300)}`;
+        await response.body?.cancel().catch(() => {});
+        lastError = `HTTP ${response.status}`;
         lastStatus = response.status;
         if (OPENAI_RETRYABLE.has(response.status)) continue;
         return {

@@ -65,13 +65,13 @@ The web UI at [`/dashboard`](http://localhost:3000/dashboard) lets you register 
 
 ```mermaid
 flowchart LR
-    R[(SQLite agents)] --> D[Dashboard DTO]
+    R[(Shared Postgres)] --> D[Dashboard DTO]
     D --> O[Run one]
     D --> B[Run all]
     B --> Q[Queued runs]
     Q --> S[Bounded scheduler · max 2]
     S --> E[Existing runEval engine]
-    E --> H[(SQLite runs)]
+    E --> H[(Postgres runs)]
     H --> D
 ```
 
@@ -85,7 +85,158 @@ This is technically stronger than a dashboard that merely fires requests in para
 - **Secrets stay server-side.** The public projection exposes auth configuration status and tool count, never the token or system prompt.
 - **Evidence stays attached.** The dashboard is a fleet index; each score links back to the existing full transcript, verdicts and fixes in `/runs/:id`.
 
-The current implementation is deliberately honest about its boundary: SQLite and the scheduler are process-local, which is a strong local/CI control plane but not yet a multi-region job system. Moving that boundary to a durable queue and shared database is the next scale step; it does not require changing the evaluation engine or its measurement invariants.
+In production, Postgres is the source of truth and gates can be dispatched to a durable worker. SQLite remains the zero-dependency local/test adapter; it is never used as a production fallback when `DATABASE_URL` is configured.
+
+### Production boundary
+
+Deployments in `production` fail closed for the browser dashboard and its local `/api/*` control routes unless `GAUNTLET_DASHBOARD_USER` and `GAUNTLET_DASHBOARD_PASSWORD` are configured. The UI uses HTTP Basic Auth; CI and agent integrations use workspace-scoped `GAUNTLET_API_KEY` credentials against `/api/v1/*` or `/api/mcp`, which are not gated by the browser password.
+
+The local adapter and synchronous execution remain available for backward compatibility, but production uses the shared Postgres/worker path described below. The gate contract, immutable history and CLI do not change across that boundary.
+
+### Shared production runtime
+
+Neon Postgres stores tenants, API keys, agents, traces, regression cases, runs, datasets, suites, gate history, jobs and audit events. Run the idempotent migration from an existing local database with:
+
+```bash
+DATABASE_URL="…" GAUNTLET_SECRETS_KEY="<32-byte base64url>" pnpm gauntlet migrate --from data/gauntlet.db
+DATABASE_URL="…" GAUNTLET_SECRETS_KEY="<32-byte base64url>" pnpm gauntlet bootstrap
+```
+
+The first command only inserts missing records and encrypts agent credentials before they leave SQLite. The second emits one owner key; it is intentionally never recoverable from the database. Store it in the CI secret manager and rotate by creating a new key, migrating callers, and revoking the old one at the provider layer.
+
+With SQLite, `POST /api/v1/gates` preserves the synchronous `201` contract. When shared Postgres is configured, gates always use the durable worker path and return `202` with `jobId` and `gateRunId`; clients poll `GET /api/v1/gates/:id`. Inngest retries the worker up to three times, limits concurrent gate workers to five, and the persisted gate state makes duplicate delivery harmless.
+
+Shared runs persist cancellation requests in Postgres, so cancelling from another application instance is honored by the runner; an in-process abort only reduces the time until the next execution boundary.
+
+The API key carries a role (`owner`, `admin`, `developer`, `viewer`). Reads require `viewer`; agent registration, traces, case promotion, replay and gates require `developer`; key administration requires `admin`. Control-plane mutations and trace/gate events attempt append-only auditing with a one-way IP hash and no payload transcript; if the audit store is unavailable, the mutation can succeed without an audit event and requires operational monitoring.
+
+Readiness is available at `/api/health?readiness=1`: it checks Postgres and the durable worker configuration and returns `503` when a production dependency is missing. See [`docs/operations/production.md`](docs/operations/production.md) and [`docs/operations/backup-recovery.md`](docs/operations/backup-recovery.md) for deploy, backup, restore and incident procedures.
+
+## Connect real agent executions
+
+The dashboard also accepts observed traces from agents that are not exposed as a simple chat endpoint. This is the data-plane path: register an agent once, then send typed run/turn/tool/assertion events as they happen. The dashboard labels the agent `observed` until it also has a black-box endpoint, and keeps the observed signal separate from synthetic suite scores.
+
+Create a local workspace key:
+
+```bash
+pnpm gauntlet key --name "staging agents"
+export GAUNTLET_URL=http://localhost:3000
+export GAUNTLET_API_KEY=gk_...
+```
+
+Register and ingest from an agent process with the dependency-free fetch client:
+
+```ts
+import { createGauntletClient } from "./src/sdk/client";
+
+const gauntlet = createGauntletClient({
+  baseUrl: process.env.GAUNTLET_URL ?? "http://localhost:3000",
+  apiKey: process.env.GAUNTLET_API_KEY ?? "",
+});
+
+const agent = await gauntlet.registerAgent({
+  name: "Support agent",
+  externalId: "support-staging",
+  source: "sdk",
+});
+if (!agent.ok) throw new Error(agent.error.message);
+
+await gauntlet.ingestTrace({
+  traceId: "trace-001",
+  eventId: "trace-001-turn-001",
+  agentId: agent.value.id,
+  deployment: "staging",
+  version: process.env.GIT_SHA ?? "local",
+  kind: "turn",
+  input: { message: "Where is my order?" },
+  output: { message: "I can look that up." },
+  latencyMs: 842,
+  status: "ok",
+  occurredAt: Date.now(),
+});
+```
+
+The same workspace is available through `POST /api/mcp` for MCP clients. Configure the client with the endpoint URL and `Authorization: Bearer <GAUNTLET_API_KEY>`, then use `list_agents`, `register_agent`, `run_suite`, `get_run`, `get_trace`, `list_cases`, `promote_trace`, `replay_case`, and `run_gate`. MCP is the control surface; the trace API remains independent so CI jobs and agent runtimes can report evidence without an LLM client.
+
+The authenticated read API makes the data plane composable too:
+
+```text
+GET /api/v1/agents              fleet state + latest run/trace summaries
+GET /api/v1/runs?agentId=...    run status, progress, score and certification
+GET /api/v1/traces?limit=50    recent trace summaries (optionally per agent)
+GET /api/v1/cases                regression cases (assertions promoted from traces)
+POST /api/v1/cases/from-trace    promote one redacted trace into a case
+POST /api/v1/cases/:id/replay    replay the case, judge it and persist the verdict
+GET /api/v1/gates                 recent gate history and version baselines
+POST /api/v1/gates                run selected/all cases with bounded concurrency
+```
+
+These endpoints are workspace-scoped and return summaries only. Raw inputs, outputs, tool payloads and credentials stay server-side; this is intentional so an observability token can power automation without becoming a transcript exfiltration token.
+
+### From observed failure to regression gate
+
+An instrumented agent can turn a production signal into a deterministic test without copying a transcript into a prompt. `POST /api/v1/cases/from-trace` reads the stored, already-redacted input and assertion from the trace, then creates a case tied to the same agent and workspace. The public case summary never includes the input.
+
+Replay sends that input once to the configured agent endpoint and evaluates the response with the same binary judge used by suites. A case promoted from an observed failed assertion expects the invariant to pass on replay; the result is persisted as `pass`, `fail`, or `error`. `error` means the evaluator or connector could not produce a verdict and is never silently counted as a passing agent behavior.
+
+The CLI exposes the same gate:
+
+```bash
+gauntlet replay --case-id <id> --api-key "$GAUNTLET_API_KEY"
+```
+
+This is the practical difference between Gauntlet and asking an LLM to review a prompt: the input is captured at the system boundary, sensitive fields are redacted before persistence, the same endpoint is replayed, the judge contract is binary, and the verdict becomes a versionable signal that can run in CI.
+
+### CI gate and GitHub status checks
+
+`gauntlet gate` runs all cases in the workspace by default, or only repeated `--case-id` selections. It compares each current result with the previous completed gate, labels `pass → fail/error` as a regression, and exits with a CI-stable code:
+
+```bash
+gauntlet gate \
+  --base-url "$GAUNTLET_URL" \
+  --api-key "$GAUNTLET_API_KEY" \
+  --version "$GITHUB_SHA" \
+  --output agent-eval-report.json
+```
+
+Exit `0` means every case passed, `1` means at least one case failed or regressed, and `2` means the gate could not evaluate reliably (configuration, authentication, connector or judge error). The report contains versions, counts, latency and per-case verdict metadata; it never contains the replay input or agent output.
+
+This repository includes `.github/workflows/agent-evals.yml`. Configure `GAUNTLET_URL` and `GAUNTLET_API_KEY` as repository or environment secrets, then make the `regression gate` job a required status check in branch protection. The previous completed gate is the baseline, so the hosted Gauntlet workspace must receive the same cases before the first protected merge. Pull requests from forks cannot access repository secrets by default; use an explicitly trusted environment or a non-secret read-only setup for that workflow shape.
+
+### Test suites
+
+The dashboard's suite selector makes the test intent explicit. All suites use the same agent endpoint, tool loop, judge and certification gates; only the scenario emphasis changes.
+
+| Suite | What it tries to break | Default mix |
+| --- | --- | ---: |
+| `balanced` | Broad product signal across normal, edge and adversarial behavior | 40 / 30 / 30 |
+| `safety` | Prompt injection, scope creep, privacy, authority pressure and hallucination | 25 / 25 / 50 |
+| `reliability` | Ambiguity, missing data, recovery, context retention and consistency | 50 / 40 / 10 |
+| `tools` | Tool choice, malformed arguments, hostile tool results and infinite loops | 25 / 25 / 50 |
+
+The score delta shown on a card is only calculated against the previous run of the same suite. A safety score is not silently compared with a reliability score. This is the agent-eval analogue of Autonoma maintaining a test plan against changes: it turns a score trend into a scoped regression signal instead of a decorative chart.
+
+### Versioned datasets and deterministic evaluators
+
+For repeatable task evaluations, upload an immutable dataset version instead of embedding examples in a prompt. Gauntlet canonicalizes the ordered items and exposes a SHA-256 checksum; uploading the same `name + version` twice is idempotent, while a different payload is rejected. Each item can use a deterministic evaluator (`contains`, `regex`, or `exact_json`) or the existing model judge.
+
+```bash
+curl -X POST "$GAUNTLET_URL/api/v1/datasets" \
+  -H "Authorization: Bearer $GAUNTLET_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"checkout","version":"2026-09-08","items":[{"input":{"cart":[{"sku":"A","qty":2}]},"evaluator":{"type":"exact_json","value":{"ok":true}}}]}'
+```
+
+Create a suite from that immutable version with an optional `agentId`; its items are materialized as replayable cases, so `gauntlet gate --suite-id <id>` uses the same baseline and regression semantics as trace-promoted cases. `caseIds` remains authoritative when both selectors are supplied.
+
+The batch trace endpoint accepts up to 100 events, normalizes IDs and metadata, redacts sensitive keys recursively, enforces payload bounds, and returns partial success without echoing payloads:
+
+```text
+POST /api/v1/traces/batch      { accepted, duplicates, rejected }
+GET  /api/metrics              workspace aggregates only; no transcripts
+```
+
+The SDK mirrors this with `ingestTraces`, `createDataset`, and `listDatasets`; MCP exposes `list_datasets` and `create_dataset`. Deterministic evaluators avoid judge cost and model variance when an assertion can be expressed as data. Model evaluation remains available for semantic criteria and is still reported separately by the existing judge metadata.
 
 ## The hard parts
 
@@ -283,7 +434,7 @@ The CLI can start the agent with `startCommand`, wait for `readyPath`, shut down
 
 ## Stack
 
-`Next.js 15` · `TypeScript` · `React` · `Vitest` · `SQLite` · `Anthropic` · `OpenAI` · `CLI / CI`
+`Next.js 15` · `TypeScript` · `React` · `Vitest` · `Neon Postgres` · `Inngest` · `Anthropic` · `OpenAI` · `CLI / CI`
 
 ---
 
