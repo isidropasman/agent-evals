@@ -27,6 +27,8 @@ import { listSharedRegressionCases, promoteSharedTrace, executeSharedRegressionC
 import { enqueueGate } from "@/server/durable-gates";
 import { createDatasetVersion, listDatasetVersions } from "@/server/dataset-store";
 import { parseDatasetVersionInput } from "@/server/http-input";
+import { listSubscriptionConnections, subscriptionConnectionAvailable } from "@/server/subscription-store";
+import { connectCodexSubscription } from "@/server/codex-subscription";
 
 export async function handleMcpRequest(
   workspaceId: string,
@@ -69,6 +71,10 @@ async function callTool(
   switch (name) {
     case "list_agents":
       return success({ agents: sharedDatabaseEnabled() ? (await sharedListAgents(workspaceId)).map(toPublicAgent) : listAgents(workspaceId).map(toPublicAgent) });
+    case "list_subscriptions":
+      return success({ connections: await listSubscriptionConnections(workspaceId) });
+    case "connect_codex":
+      return connectCodex(workspaceId);
     case "register_agent":
       return registerAgent(workspaceId, args);
     case "run_suite":
@@ -92,6 +98,11 @@ async function callTool(
     default:
       return failure(`tool no encontrada: ${name}`);
   }
+}
+
+async function connectCodex(workspaceId: string): Promise<ToolResult> {
+  const result = await connectCodexSubscription(workspaceId);
+  return result.ok ? success({ connection: result.value }) : failure(result.error === "subscription_not_saved" ? "Codex no pudo guardarse" : result.error.message);
 }
 
 async function createDataset(workspaceId: string, args: Record<string, unknown>): Promise<ToolResult> {
@@ -122,7 +133,9 @@ async function runSuite(workspaceId: string, args: Record<string, unknown>): Pro
   if (!agent.active) return failure("agent inactivo");
   if (!agent.endpointUrl || !agent.systemPrompt) return failure("agent observado: necesita endpoint y system prompt para black-box run");
   const runId = randomUUID();
-  if (!await startRunAsync(runId, toStartRunInput(agent, runConfigForPreset(scenarioCount, k, suite)))) return failure("no se pudo crear la corrida");
+  const subscriptionConnectionId = stringValue(args.subscriptionConnectionId);
+  if (subscriptionConnectionId && !await subscriptionConnectionAvailable(workspaceId, subscriptionConnectionId)) return failure("subscription unavailable");
+  if (!await startRunAsync(runId, toStartRunInput(agent, runConfigForPreset(scenarioCount, k, suite), subscriptionConnectionId))) return failure("no se pudo crear la corrida");
   return success({ runId, suite, scenarioCount, k });
 }
 
@@ -163,13 +176,16 @@ async function promoteTrace(workspaceId: string, args: Record<string, unknown>):
 async function replayCase(workspaceId: string, args: Record<string, unknown>): Promise<ToolResult> {
   const caseId = stringValue(args.caseId);
   if (!caseId) return failure("caseId es obligatorio");
-  const result = sharedDatabaseEnabled() ? await executeSharedRegressionCase(workspaceId, caseId) : await executeRegressionCase(workspaceId, caseId);
+  const subscriptionConnectionId = stringValue(args.subscriptionConnectionId);
+  if (subscriptionConnectionId && !await subscriptionConnectionAvailable(workspaceId, subscriptionConnectionId)) return failure("subscription unavailable");
+  const result = sharedDatabaseEnabled() ? await executeSharedRegressionCase(workspaceId, caseId, subscriptionConnectionId) : await executeRegressionCase(workspaceId, caseId, subscriptionConnectionId);
   return result.ok ? success(result.value) : failure(result.message);
 }
 
 async function runGate(workspaceId: string, args: Record<string, unknown>): Promise<ToolResult> {
   const parsed = parseRegressionGateInput(args);
   if (!parsed.ok) return failure(parsed.error);
+  if (parsed.value.subscriptionConnectionId && !await subscriptionConnectionAvailable(workspaceId, parsed.value.subscriptionConnectionId)) return failure("subscription unavailable");
   if (sharedDatabaseEnabled()) {
     const queued = await enqueueGate(workspaceId, parsed.value);
     return queued.ok ? success(queued.value) : failure(queued.message);

@@ -131,6 +131,7 @@ async function initializeSchema(): Promise<SharedQueryResult> {
       progress_json TEXT,
       report_json TEXT,
       error TEXT,
+      subscription_connection_id TEXT,
       created_at BIGINT NOT NULL
     )`,
     `CREATE TABLE IF NOT EXISTS traces (
@@ -268,6 +269,40 @@ async function initializeSchema(): Promise<SharedQueryResult> {
       metadata_json TEXT,
       created_at BIGINT NOT NULL
     )`,
+    `CREATE TABLE IF NOT EXISTS subscription_connections (
+      id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+      provider TEXT NOT NULL,
+      account_id TEXT NOT NULL,
+      account_login TEXT NOT NULL,
+      display_name TEXT NOT NULL,
+      status TEXT NOT NULL,
+      auth_mode TEXT NOT NULL DEFAULT 'oauth_token',
+      scopes_json TEXT NOT NULL,
+      access_token TEXT NOT NULL,
+      refresh_token TEXT,
+      expires_at BIGINT,
+      last_error TEXT,
+      created_at BIGINT NOT NULL,
+      updated_at BIGINT NOT NULL,
+      UNIQUE (workspace_id, provider, account_id)
+    )`,
+    `CREATE TABLE IF NOT EXISTS subscription_usage (
+      id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+      connection_id TEXT NOT NULL REFERENCES subscription_connections(id),
+      run_id TEXT,
+      request_key TEXT NOT NULL,
+      model TEXT NOT NULL,
+      status TEXT NOT NULL,
+      input_tokens INTEGER NOT NULL,
+      output_tokens INTEGER NOT NULL,
+      token_source TEXT NOT NULL,
+      error TEXT,
+      created_at BIGINT NOT NULL,
+      completed_at BIGINT NOT NULL,
+      UNIQUE (workspace_id, request_key)
+    )`,
     `CREATE TABLE IF NOT EXISTS rate_limit_buckets (
       bucket_key TEXT PRIMARY KEY,
       window_started_at BIGINT NOT NULL,
@@ -278,11 +313,15 @@ async function initializeSchema(): Promise<SharedQueryResult> {
     `CREATE INDEX IF NOT EXISTS idx_shared_runs_workspace_time ON runs(workspace_id, created_at DESC)`,
     `CREATE INDEX IF NOT EXISTS idx_shared_gates_workspace_time ON regression_gate_runs(workspace_id, created_at DESC)`,
     `CREATE INDEX IF NOT EXISTS idx_shared_audit_workspace_time ON audit_events(workspace_id, created_at DESC)`,
+    `CREATE INDEX IF NOT EXISTS idx_shared_subscription_connections_workspace ON subscription_connections(workspace_id, updated_at DESC)`,
+    `CREATE INDEX IF NOT EXISTS idx_shared_subscription_usage_workspace ON subscription_usage(workspace_id, created_at DESC)`,
     `INSERT INTO schema_migrations (version) VALUES ('0001-production-foundation') ON CONFLICT (version) DO NOTHING`,
     `ALTER TABLE regression_cases ADD COLUMN IF NOT EXISTS evaluator_json TEXT`,
     `ALTER TABLE regression_cases ADD COLUMN IF NOT EXISTS suite_id TEXT`,
     `ALTER TABLE eval_suites ADD COLUMN IF NOT EXISTS agent_id TEXT`,
     `ALTER TABLE runs ADD COLUMN IF NOT EXISTS cancel_requested BOOLEAN NOT NULL DEFAULT false`,
+    `ALTER TABLE runs ADD COLUMN IF NOT EXISTS subscription_connection_id TEXT`,
+    `ALTER TABLE subscription_connections ADD COLUMN IF NOT EXISTS auth_mode TEXT NOT NULL DEFAULT 'oauth_token'`,
   ];
   try {
     for (const statement of statements) {

@@ -167,6 +167,7 @@ describe("parseGateArgs", () => {
         caseIds: ["a", "b"],
         version: "commit-ci",
         concurrency: 4,
+        subscriptionConnectionId: undefined,
         output: undefined,
       },
     });
@@ -182,5 +183,12 @@ describe("parseGateArgs", () => {
 
   it("keeps an error artifact contract available to CI", () => {
     expect(parseGateArgs(["--api-key", "gk_test", "--output", "agent-eval-report.json"])).toMatchObject({ ok: true, value: { output: "agent-eval-report.json" } });
+  });
+
+  it("accepts a subscription connection for remote gates", () => {
+    expect(parseGateArgs(["--api-key", "gk_test", "--subscription-id", "connection-1"])).toMatchObject({
+      ok: true,
+      value: { subscriptionConnectionId: "connection-1" },
+    });
   });
 });

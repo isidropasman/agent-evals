@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { GET as listAgents, POST as registerAgent } from "@/app/api/v1/agents/route";
 import { POST as createKey } from "@/app/api/v1/keys/route";
 import { GET as listTraces, POST as ingestTrace } from "@/app/api/v1/traces/route";
-import { GET as listRuns } from "@/app/api/v1/runs/route";
+import { GET as listRuns, POST as startRun } from "@/app/api/v1/runs/route";
 import { GET as recentTraces } from "@/app/api/traces/route";
 import { GET as listCases } from "@/app/api/v1/cases/route";
 import { POST as promoteTraceFromTrace } from "@/app/api/v1/cases/from-trace/route";
@@ -88,6 +88,25 @@ describe("v1 integration routes", () => {
     const feed = await recentTraces(new Request("http://localhost/api/traces?limit=100"));
     expect(feed.status).toBe(200);
     expect(((await feed.json()) as { traces: Array<{ agentName: string }> }).traces).toContainEqual(expect.objectContaining({ agentName: "Read agent" }));
+  });
+
+  it("rejects a missing subscription before enqueuing an authenticated run", async () => {
+    const keyResponse = await createKey(jsonRequest({ name: `run-subscription-${Date.now()}` }));
+    const keyBody = (await keyResponse.json()) as { key: { token: string } };
+    const agentResponse = await registerAgent(jsonRequest({
+      name: "Runnable subscription agent",
+      externalId: `run-subscription-agent-${Date.now()}`,
+      endpointUrl: "http://127.0.0.1:9/chat",
+      systemPrompt: "Be safe.",
+      source: "sdk",
+    }, keyBody.key.token));
+    const agentBody = (await agentResponse.json()) as { agent: { id: string } };
+    const response = await startRun(jsonRequest({
+      agentId: agentBody.agent.id,
+      subscriptionConnectionId: "missing-connection",
+    }, keyBody.key.token));
+    expect(response.status).toBe(422);
+    expect(await response.json()).toEqual({ error: "subscription unavailable" });
   });
 
   it("promotes a trace through the authenticated regression API", async () => {

@@ -11,7 +11,7 @@ describe("MCP control surface", () => {
     const initialized = await handleMcpRequest(workspace.id, { jsonrpc: "2.0", id: 1, method: "initialize" });
     expect(initialized?.result).toMatchObject({ capabilities: { tools: {} } });
     const listed = await handleMcpRequest(workspace.id, { jsonrpc: "2.0", id: 2, method: "tools/list" });
-    expect(listed?.result).toMatchObject({ tools: expect.arrayContaining([expect.objectContaining({ name: "run_suite" }), expect.objectContaining({ name: "run_gate" })]) });
+    expect(listed?.result).toMatchObject({ tools: expect.arrayContaining([expect.objectContaining({ name: "run_suite" }), expect.objectContaining({ name: "run_gate" }), expect.objectContaining({ name: "connect_codex" })]) });
   });
 
   it("registers an observed agent and refuses a black-box run without endpoint", async () => {

@@ -28,15 +28,17 @@ gauntlet — pre-production agent evals
                            crea una API key para el workspace local
   gauntlet ingest --file <path> --api-key <key> [--base-url <url>]
                            envía una traza al dashboard
-  gauntlet replay --case-id <id> --api-key <key> [--base-url <url>]
+  gauntlet replay --case-id <id> --api-key <key> [--subscription-id <id>] [--base-url <url>]
                            reejecuta un caso de regresión y devuelve su veredicto
-  gauntlet gate [--case-id <id> ...] [--suite-id <id>] [--version <version>] [--concurrency <n>]
+  gauntlet gate [--case-id <id> ...] [--suite-id <id>] [--version <version>] [--concurrency <n>] [--subscription-id <id>]
                            corre el gate multi-caso y compara contra la versión anterior
                            --output <path> guarda el reporte JSON para CI
   gauntlet migrate [--from <sqlite-path>]
                            migra datos locales a Postgres de forma reanudable
   gauntlet bootstrap [--name <name>]
                            crea la primera API key owner en Postgres
+  gauntlet codex-connect --api-key <key> [--base-url <url>]
+                           conecta la sesión local de Codex al workspace
 
   --config <path>          ruta al config (default: ./${CONFIG_FILENAME})
   -h, --help               esta ayuda
@@ -58,6 +60,7 @@ async function main(argv: string[]): Promise<number> {
   if (cmd === "gate") return cmdGate(argv.slice(1));
   if (cmd === "migrate") return cmdMigrate(argv.slice(1));
   if (cmd === "bootstrap") return cmdBootstrap(argv.slice(1));
+  if (cmd === "codex-connect") return cmdCodexConnect(argv.slice(1));
 
   process.stderr.write(`Comando desconocido: ${cmd}\n${USAGE}`);
   return 1;
@@ -101,6 +104,25 @@ async function cmdKey(args: string[]): Promise<number> {
   return 0;
 }
 
+async function cmdCodexConnect(args: string[]): Promise<number> {
+  const apiKey = flag(args, "--api-key") ?? process.env.GAUNTLET_API_KEY;
+  if (!apiKey) {
+    process.stderr.write("✕ codex-connect requiere --api-key (o GAUNTLET_API_KEY).\n");
+    return 2;
+  }
+  const client = createGauntletClient({
+    baseUrl: flag(args, "--base-url") ?? process.env.GAUNTLET_URL ?? "http://localhost:3000",
+    apiKey,
+  });
+  const result = await client.connectCodex();
+  if (!result.ok) {
+    process.stderr.write(`✕ ${result.error.message}\n`);
+    return 2;
+  }
+  process.stdout.write(`✓ Codex conectado · ${result.value.connection.displayName} · ${result.value.connection.accountLogin}\n`);
+  return 0;
+}
+
 async function cmdIngest(args: string[]): Promise<number> {
   const file = flag(args, "--file");
   const apiKey = flag(args, "--api-key") ?? process.env.GAUNTLET_API_KEY;
@@ -136,7 +158,8 @@ async function cmdIngest(args: string[]): Promise<number> {
 async function cmdReplay(args: string[]): Promise<number> {
   const caseId = flag(args, "--case-id");
   const apiKey = flag(args, "--api-key") ?? process.env.GAUNTLET_API_KEY;
-  if (!caseId || !apiKey) {
+  const subscriptionId = flag(args, "--subscription-id") ?? process.env.GAUNTLET_SUBSCRIPTION_ID;
+  if ((args.includes("--subscription-id") && !subscriptionId) || !caseId || !apiKey) {
     process.stderr.write("✕ replay requiere --case-id, --api-key (o GAUNTLET_API_KEY).\n");
     return 2;
   }
@@ -144,7 +167,7 @@ async function cmdReplay(args: string[]): Promise<number> {
     baseUrl: flag(args, "--base-url") ?? process.env.GAUNTLET_URL ?? "http://localhost:3000",
     apiKey,
   });
-  const result = await client.replayCase(caseId);
+  const result = await client.replayCase(caseId, { subscriptionConnectionId: flag(args, "--subscription-id") ?? process.env.GAUNTLET_SUBSCRIPTION_ID });
   if (!result.ok) {
     process.stderr.write(`✕ ${result.error.message}\n`);
     return 2;
@@ -168,6 +191,7 @@ async function cmdGate(args: string[]): Promise<number> {
     suiteId: parsed.value.suiteId,
     version: parsed.value.version,
     concurrency: parsed.value.concurrency,
+    subscriptionConnectionId: parsed.value.subscriptionConnectionId,
   });
   if (!result.ok) {
     writeGateReport(parsed.value.output, { status: "error", error: result.error.message });

@@ -1,10 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { runRegressionReplay, type RegressionReplayResult } from "@/engine/replay";
-import { defaultProviders } from "@/engine/runner";
 import type { RegressionCaseRecord } from "./db";
 import { toRegressionCaseSummary, type RegressionCaseSummary } from "./regression-store";
 import { sharedGetAgent, sharedGetCase, sharedGetCaseBySource, sharedGetTrace, sharedInsertCase, sharedUpdateCaseReplay } from "./shared-store";
-import { resolveKey } from "./keys";
+import { resolveEvaluationProviders } from "./eval-providers";
 
 export type SharedPromoteResult =
   | { ok: true; value: RegressionCaseRecord }
@@ -29,14 +28,15 @@ export async function listSharedRegressionCases(workspaceId: string): Promise<Re
   return (await sharedListCases(workspaceId)).map(toRegressionCaseSummary);
 }
 
-export async function executeSharedRegressionCase(workspaceId: string, caseId: string): Promise<{ ok: true; value: { case: RegressionCaseSummary; replay: RegressionReplayResult } } | { ok: false; error: string; message: string }> {
+export async function executeSharedRegressionCase(workspaceId: string, caseId: string, subscriptionConnectionId?: string): Promise<{ ok: true; value: { case: RegressionCaseSummary; replay: RegressionReplayResult } } | { ok: false; error: string; message: string }> {
   const regressionCase = await sharedGetCase(workspaceId, caseId);
   if (!regressionCase) return { ok: false, error: "case_not_found", message: "regression case not found" };
   const agent = await sharedGetAgent(regressionCase.agentId, workspaceId);
   if (!agent) return { ok: false, error: "agent_not_found", message: "agent not found" };
   if (!agent.active || !agent.endpointUrl) return { ok: false, error: "agent_not_runnable", message: "agent needs an active endpoint for replay" };
-  const providers = defaultProviders(resolveKey("anthropic") ?? undefined, resolveKey("openai") ?? undefined);
-  const replay = await runRegressionReplay({ connection: { endpointUrl: agent.endpointUrl, protocol: agent.protocol, authType: agent.authType, authToken: agent.authToken ?? undefined, authHeaderName: agent.authHeaderName ?? undefined }, sessionId: `regression-${caseId}-${randomUUID()}`, testCase: regressionCase }, providers.judge, providers.judgeModel);
+  const providers = await resolveEvaluationProviders({ workspaceId, subscriptionConnectionId, runId: `replay-${caseId}-${randomUUID()}` });
+  if (!providers.ok) return { ok: false, error: "replay_failed", message: "subscription unavailable" };
+  const replay = await runRegressionReplay({ connection: { endpointUrl: agent.endpointUrl, protocol: agent.protocol, authType: agent.authType, authToken: agent.authToken ?? undefined, authHeaderName: agent.authHeaderName ?? undefined }, sessionId: `regression-${caseId}-${randomUUID()}`, testCase: regressionCase }, providers.value.judge, providers.value.judgeModel);
   const runAt = Date.now();
   if (!replay.ok) {
     const message = `replay failed (${replay.error.kind})`;

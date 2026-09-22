@@ -8,6 +8,7 @@ import { recordAudit } from "@/server/audit";
 import { parseRegressionGateInput } from "@/server/http-input";
 import { listRegressionGateSummaries } from "@/server/gate-store";
 import { runWorkspaceRegressionGate } from "@/server/gate-runner";
+import { subscriptionConnectionAvailable } from "@/server/subscription-store";
 
 export const runtime = "nodejs";
 
@@ -30,6 +31,9 @@ export async function POST(request: Request) {
   }
   const parsed = parseRegressionGateInput(body);
   if (!parsed.ok) return NextResponse.json({ error: parsed.error }, { status: 400 });
+  if (parsed.value.subscriptionConnectionId && !await subscriptionConnectionAvailable(principal.workspace.id, parsed.value.subscriptionConnectionId)) {
+    return NextResponse.json({ error: "subscription unavailable" }, { status: 422 });
+  }
   const asyncRequested = isRecord(body) && (body.mode === "async" || request.headers.get("prefer")?.includes("respond-async"));
   if (asyncRequested) {
     const queued = await enqueueGate(principal.workspace.id, parsed.value);

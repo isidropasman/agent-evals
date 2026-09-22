@@ -1,9 +1,8 @@
 import { inngest } from "./durable-gates";
-import { defaultProviders } from "@/engine/runner";
 import { runRegressionReplay } from "@/engine/replay";
 import { randomUUID } from "node:crypto";
 import type { RegressionGateCaseResultRecord } from "./db";
-import { resolveKey } from "./keys";
+import { resolveEvaluationProviders } from "./eval-providers";
 import { sharedCompleteGate, sharedGetAgent, sharedGetGate, sharedGetPreviousCompletedGate, sharedInsertGateCaseResult, sharedListCasesResult, sharedListGateCaseResultsResult, sharedUpdateCaseReplay } from "./shared-store";
 import { getSharedSuite } from "./shared-suite-store";
 import type { RegressionGateInput } from "./gate-runner";
@@ -75,8 +74,9 @@ export const gateWorker = inngest.createFunction(
       if (!agent || !agent.active || !agent.endpointUrl) {
         return { caseId: item.id, agentId: item.agentId, status: "error" as const, passed: null, baselineStatus, regression: baselineStatus === "pass", latencyMs: null, error: "agent needs an active endpoint for replay" };
       }
-      const providers = defaultProviders(resolveKey("anthropic") ?? undefined, resolveKey("openai") ?? undefined);
-      const replay = await runRegressionReplay({ connection: { endpointUrl: agent.endpointUrl, protocol: agent.protocol, authType: agent.authType, authToken: agent.authToken ?? undefined, authHeaderName: agent.authHeaderName ?? undefined }, sessionId: `regression-${item.id}-${randomUUID()}`, testCase: item }, providers.judge, providers.judgeModel);
+      const providers = await resolveEvaluationProviders({ workspaceId, subscriptionConnectionId: event.data.input.subscriptionConnectionId, runId: `replay-${item.id}` });
+      if (!providers.ok) return { caseId: item.id, agentId: item.agentId, status: "error" as const, passed: null, baselineStatus, regression: baselineStatus === "pass", latencyMs: null, error: "subscription unavailable" };
+      const replay = await runRegressionReplay({ connection: { endpointUrl: agent.endpointUrl, protocol: agent.protocol, authType: agent.authType, authToken: agent.authToken ?? undefined, authHeaderName: agent.authHeaderName ?? undefined }, sessionId: `regression-${item.id}-${randomUUID()}`, testCase: item }, providers.value.judge, providers.value.judgeModel);
       const now = Date.now();
       if (!replay.ok) {
         const message = `replay failed (${replay.error.kind})`;

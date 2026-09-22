@@ -282,11 +282,11 @@ export async function sharedGetRun(workspaceId: string, id: string): Promise<Run
   return row ? runFromRow(row) : null;
 }
 
-export async function sharedInsertRun(input: { id: string; workspaceId: string; agentId?: string; agentName: string; clientName: string | null; endpointUrl: string; createdAt: number; status: "queued" | "running" }): Promise<boolean> {
+export async function sharedInsertRun(input: { id: string; workspaceId: string; agentId?: string; agentName: string; clientName: string | null; endpointUrl: string; createdAt: number; status: "queued" | "running"; subscriptionConnectionId?: string }): Promise<boolean> {
   const result = await queryShared(
-    `INSERT INTO runs (id, workspace_id, agent_id, agent_name, client_name, endpoint_url, status, created_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8) ON CONFLICT (id) DO NOTHING RETURNING id`,
-    [input.id, input.workspaceId, input.agentId ?? null, input.agentName, input.clientName, input.endpointUrl, input.status, input.createdAt],
+    `INSERT INTO runs (id, workspace_id, agent_id, agent_name, client_name, endpoint_url, status, subscription_connection_id, created_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) ON CONFLICT (id) DO NOTHING RETURNING id`,
+    [input.id, input.workspaceId, input.agentId ?? null, input.agentName, input.clientName, input.endpointUrl, input.status, input.subscriptionConnectionId ?? null, input.createdAt],
   );
   return result.ok && result.rows.length === 1;
 }
@@ -383,7 +383,7 @@ function gateCaseFromRow(row: SharedRow): RegressionGateCaseResultRecord {
 }
 
 function runFromRow(row: SharedRow): RunRow {
-  return { id: stringValue(row.id), workspaceId: stringValue(row.workspace_id), agentId: nullableString(row.agent_id), agentName: stringValue(row.agent_name), clientName: nullableString(row.client_name), endpointUrl: stringValue(row.endpoint_url), status: runStatusValue(row.status), progress: parseJson(row.progress_json) as RunRow["progress"], report: parseJson(row.report_json) as RunRow["report"], error: nullableString(row.error), createdAt: numberValue(row.created_at) };
+  return { id: stringValue(row.id), workspaceId: stringValue(row.workspace_id), agentId: nullableString(row.agent_id), agentName: stringValue(row.agent_name), clientName: nullableString(row.client_name), endpointUrl: stringValue(row.endpoint_url), status: runStatusValue(row.status), progress: parseJson(row.progress_json) as RunRow["progress"], report: parseJson(row.report_json) as RunRow["report"], error: nullableString(row.error), subscriptionConnectionId: nullableString(row.subscription_connection_id), createdAt: numberValue(row.created_at) };
 }
 
 function json(value: unknown): string | null { return value === null || value === undefined ? null : JSON.stringify(value); }

@@ -8,6 +8,7 @@ import { getDefaultWorkspace } from "@/server/workspace-store";
 import { sharedDatabaseEnabled } from "@/server/shared-db";
 import { sharedGetAgent, sharedListAgents, sharedListRuns } from "@/server/shared-store";
 import { getSharedDefaultWorkspace } from "@/server/shared-workspace-store";
+import { subscriptionConnectionAvailable } from "@/server/subscription-store";
 
 export const runtime = "nodejs";
 
@@ -54,9 +55,18 @@ export async function POST(req: Request) {
   }
 
   const config = runConfigForPreset(preset.value.scenarioCount, preset.value.k, preset.value.suite);
+  const subscriptionConnectionId = body.value.subscriptionConnectionId === undefined
+    ? undefined
+    : typeof body.value.subscriptionConnectionId === "string" && body.value.subscriptionConnectionId.trim()
+      ? body.value.subscriptionConnectionId.trim()
+      : null;
+  if (subscriptionConnectionId === null) return NextResponse.json({ error: "subscriptionConnectionId debe ser un string no vacío" }, { status: 400 });
+  if (subscriptionConnectionId && !await subscriptionConnectionAvailable(workspaceId, subscriptionConnectionId)) {
+    return NextResponse.json({ error: "subscription unavailable" }, { status: 422 });
+  }
   const tasks: BatchRunTask[] = selected.map((agent) => ({
     id: randomUUID(),
-    input: toStartRunInput(agent, config),
+    input: toStartRunInput(agent, config, subscriptionConnectionId),
   }));
   if (!await startBatchRunAsync(tasks)) return NextResponse.json({ error: "no se pudieron crear las corridas" }, { status: 503 });
   return NextResponse.json(

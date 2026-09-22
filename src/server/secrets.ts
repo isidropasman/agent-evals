@@ -42,6 +42,11 @@ export function secretsConfigured(): boolean {
   return configuredKey() !== null;
 }
 
+export function secretKeyMaterial(): Buffer | null {
+  const key = configuredKey();
+  return key ? Buffer.from(key) : null;
+}
+
 function configuredKey(): Buffer | null {
   const raw = process.env.GAUNTLET_SECRETS_KEY?.trim();
   if (!raw) return null;

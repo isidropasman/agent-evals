@@ -6,6 +6,7 @@ import { parseRegressionGateInput } from "@/server/http-input";
 import { sharedDatabaseEnabled } from "@/server/shared-db";
 import { sharedListGates } from "@/server/shared-store";
 import { enqueueGate } from "@/server/durable-gates";
+import { subscriptionConnectionAvailable } from "@/server/subscription-store";
 
 export const runtime = "nodejs";
 
@@ -24,6 +25,10 @@ export async function POST(request: Request) {
   }
   const parsed = parseRegressionGateInput(body);
   if (!parsed.ok) return NextResponse.json({ error: parsed.error }, { status: 400 });
+  const workspaceId = sharedDatabaseEnabled() ? "workspace_local" : getDefaultWorkspace().id;
+  if (parsed.value.subscriptionConnectionId && !await subscriptionConnectionAvailable(workspaceId, parsed.value.subscriptionConnectionId)) {
+    return NextResponse.json({ error: "subscription unavailable" }, { status: 422 });
+  }
   if (sharedDatabaseEnabled()) {
     const queued = await enqueueGate("workspace_local", parsed.value);
     if (!queued.ok) return NextResponse.json({ error: queued.message }, { status: queued.error === "no_cases" ? 409 : queued.error === "invalid_case_ids" ? 404 : 503 });

@@ -72,6 +72,10 @@ export function parseAgentRegistration(raw: unknown): ParseResult<AgentRegistrat
   if (mode !== undefined && mode !== "auto" && mode !== "conversational" && mode !== "task") {
     return { ok: false, error: "mode inválido" };
   }
+  const subscriptionConnectionId = raw.subscriptionConnectionId === undefined
+    ? undefined
+    : stringValue(raw.subscriptionConnectionId);
+  if (raw.subscriptionConnectionId !== undefined && !subscriptionConnectionId) return { ok: false, error: "subscriptionConnectionId debe ser un string no vacío" };
   return {
     ok: true,
     value: {
@@ -171,6 +175,10 @@ export function parseRegressionGateInput(raw: unknown): ParseResult<RegressionGa
   if (concurrency !== undefined && (typeof concurrency !== "number" || !Number.isInteger(concurrency) || concurrency < 1 || concurrency > 8)) {
     return { ok: false, error: "concurrency debe ser un entero entre 1 y 8" };
   }
+  const subscriptionConnectionId = raw.subscriptionConnectionId === undefined
+    ? undefined
+    : stringValue(raw.subscriptionConnectionId);
+  if (raw.subscriptionConnectionId !== undefined && !subscriptionConnectionId) return { ok: false, error: "subscriptionConnectionId debe ser un string no vacío" };
   return {
     ok: true,
     value: {
@@ -178,6 +186,7 @@ export function parseRegressionGateInput(raw: unknown): ParseResult<RegressionGa
       suiteId,
       version,
       concurrency,
+      subscriptionConnectionId,
     },
   };
 }

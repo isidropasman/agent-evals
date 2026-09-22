@@ -5,6 +5,7 @@ export interface GateCliOptions {
   suiteId?: string;
   version?: string;
   concurrency?: number;
+  subscriptionConnectionId?: string;
   output?: string;
 }
 
@@ -15,11 +16,12 @@ export type ParseGateArgsResult =
 interface GateEnv {
   GAUNTLET_API_KEY?: string;
   GAUNTLET_URL?: string;
+  GAUNTLET_SUBSCRIPTION_ID?: string;
   GITHUB_SHA?: string;
 }
 
 export function parseGateArgs(args: string[], env: GateEnv = process.env as unknown as GateEnv): ParseGateArgsResult {
-  for (const name of ["--api-key", "--base-url", "--case-id", "--suite-id", "--version", "--concurrency", "--output"]) {
+  for (const name of ["--api-key", "--base-url", "--case-id", "--suite-id", "--version", "--concurrency", "--subscription-id", "--output"]) {
     if (hasMissingValue(args, name)) return { ok: false, error: `${name} requiere un valor.` };
   }
   const apiKey = flag(args, "--api-key") ?? env.GAUNTLET_API_KEY;
@@ -37,6 +39,7 @@ export function parseGateArgs(args: string[], env: GateEnv = process.env as unkn
   if (args.includes("--version") && !version) return { ok: false, error: "--version requiere un valor." };
   const output = flag(args, "--output");
   if (args.includes("--output") && !output) return { ok: false, error: "--output requiere un valor." };
+  const subscriptionConnectionId = flag(args, "--subscription-id") ?? env.GAUNTLET_SUBSCRIPTION_ID;
   return {
     ok: true,
     value: {
@@ -46,6 +49,7 @@ export function parseGateArgs(args: string[], env: GateEnv = process.env as unkn
       suiteId,
       version,
       concurrency,
+      subscriptionConnectionId,
       output,
     },
   };

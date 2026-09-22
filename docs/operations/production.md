@@ -22,8 +22,15 @@ El código y el esquema están preparados para este despliegue. En este workspac
 | `INNGEST_SIGNING_KEY_FALLBACK` | rotación sin downtime | sólo server, temporal |
 | `GAUNTLET_DASHBOARD_USER/PASSWORD` | Basic Auth del dashboard | sólo server |
 | `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` | providers del evaluador | sólo server/CI |
+| `GITHUB_CLIENT_ID` | OAuth App para conectar GitHub Copilot | sólo server |
+| `GITHUB_CLIENT_SECRET` | intercambio server-side del código OAuth | sólo server |
+| `GITHUB_OAUTH_CALLBACK_URL` | callback absoluta `/api/subscriptions/github/callback` | sólo server |
+| `GAUNTLET_COPILOT_JUDGE_MODEL` | modelo Copilot opcional para el juez | sólo server |
+| `GAUNTLET_SUBSCRIPTION_ID` | conexión elegida por CLI para replay/gates | sólo CI |
+| `GAUNTLET_CODEX_BIN` | ruta opcional al binario `codex` del bridge local | sólo runtime local |
+| `GAUNTLET_CODEX_MODEL` | modelo Codex opcional para el juez | sólo runtime local |
 
-Nunca uses `NEXT_PUBLIC_` para una de estas variables. Vercel Marketplace o la configuración manual mantienen los recursos y secretos por entorno; revisá `vercel env ls` sin imprimir valores.
+Nunca uses `NEXT_PUBLIC_` para una de estas variables. El callback OAuth debe estar registrado exactamente en GitHub. Los tokens de suscripción se guardan cifrados y nunca se devuelven en APIs, logs, traces ni reportes; el ledger usa tokens estimados salvo que el proveedor entregue el dato real. El bridge Codex es estrictamente local: requiere `codex login`, ejecuta `codex app-server --stdio` y no copia `~/.codex/auth.json`. No cargues `GAUNTLET_CODEX_BIN` ni una sesión Codex en Vercel; las funciones remotas no pueden reutilizar la sesión local. Vercel Marketplace o la configuración manual mantienen los recursos y secretos por entorno; revisá `vercel env ls` sin imprimir valores.
 
 ## Deploy checklist
 
@@ -34,6 +41,7 @@ Nunca uses `NEXT_PUBLIC_` para una de estas variables. Vercel Marketplace o la c
 5. Probar un gate async con una suite pequeña y verificar `queued → running → pass/fail/error`.
 6. Configurar el job `regression gate` como required status check en GitHub.
 7. Activar logs/alertas de `503`, `429`, jobs con retries y gates `error`.
+8. En local, ejecutar `codex login` y usar `gauntlet codex-connect --api-key ...` o el dashboard; verificar `authMode=codex_local`, `connected` y el summary sin tokens. En producción remota, validar GitHub Copilot o API keys; no declarar Codex disponible en Vercel.
 
 ## Contrato de datos reproducibles
 

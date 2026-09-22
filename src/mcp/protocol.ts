@@ -48,6 +48,16 @@ export const MCP_TOOLS: readonly McpTool[] = [
     },
   },
   {
+    name: "list_subscriptions",
+    description: "Lista las suscripciones conectadas sin exponer credenciales.",
+    inputSchema: { type: "object", properties: {} },
+  },
+  {
+    name: "connect_codex",
+    description: "Conecta la sesión local de Codex con suscripción ChatGPT al workspace.",
+    inputSchema: { type: "object", properties: {} },
+  },
+  {
     name: "run_suite",
     description: "Lanza una suite reproducible contra un agente black-box.",
     inputSchema: {
@@ -57,6 +67,7 @@ export const MCP_TOOLS: readonly McpTool[] = [
         suite: { type: "string", enum: ["balanced", "safety", "reliability", "tools"] },
         scenarioCount: { type: "number", enum: [10, 50] },
         k: { type: "number", enum: [1, 4] },
+        subscriptionConnectionId: { type: "string" },
       },
       required: ["agentId"],
     },
@@ -96,7 +107,7 @@ export const MCP_TOOLS: readonly McpTool[] = [
   {
     name: "replay_case",
     description: "Reejecuta un caso de regresión contra su agente y persiste el veredicto.",
-    inputSchema: { type: "object", properties: { caseId: { type: "string" } }, required: ["caseId"] },
+    inputSchema: { type: "object", properties: { caseId: { type: "string" }, subscriptionConnectionId: { type: "string" } }, required: ["caseId"] },
   },
   {
     name: "run_gate",
@@ -108,6 +119,7 @@ export const MCP_TOOLS: readonly McpTool[] = [
         suiteId: { type: "string" },
         version: { type: "string" },
         concurrency: { type: "number", minimum: 1, maximum: 8 },
+        subscriptionConnectionId: { type: "string" },
       },
     },
   },

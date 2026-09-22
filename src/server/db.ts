@@ -51,11 +51,49 @@ function db(): Database.Database {
       progress_json TEXT,
       report_json TEXT,
       error TEXT,
+      subscription_connection_id TEXT,
       created_at INTEGER NOT NULL
     );
     CREATE TABLE IF NOT EXISTS settings (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS subscription_connections (
+      id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL,
+      provider TEXT NOT NULL,
+      account_id TEXT NOT NULL,
+      account_login TEXT NOT NULL,
+      display_name TEXT NOT NULL,
+      status TEXT NOT NULL,
+      auth_mode TEXT NOT NULL DEFAULT 'oauth_token',
+      scopes_json TEXT NOT NULL,
+      access_token TEXT NOT NULL,
+      refresh_token TEXT,
+      expires_at INTEGER,
+      last_error TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      UNIQUE (workspace_id, provider, account_id),
+      FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
+    );
+    CREATE TABLE IF NOT EXISTS subscription_usage (
+      id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL,
+      connection_id TEXT NOT NULL,
+      run_id TEXT,
+      request_key TEXT NOT NULL,
+      model TEXT NOT NULL,
+      status TEXT NOT NULL,
+      input_tokens INTEGER NOT NULL,
+      output_tokens INTEGER NOT NULL,
+      token_source TEXT NOT NULL,
+      error TEXT,
+      created_at INTEGER NOT NULL,
+      completed_at INTEGER NOT NULL,
+      UNIQUE (workspace_id, request_key),
+      FOREIGN KEY (workspace_id) REFERENCES workspaces(id),
+      FOREIGN KEY (connection_id) REFERENCES subscription_connections(id)
     );
     CREATE TABLE IF NOT EXISTS workspaces (
       id TEXT PRIMARY KEY,
@@ -223,6 +261,10 @@ function db(): Database.Database {
       ON regression_gate_runs(workspace_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_regression_gate_case_results_case
       ON regression_gate_case_results(workspace_id, case_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_subscription_connections_workspace
+      ON subscription_connections(workspace_id, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_subscription_usage_workspace
+      ON subscription_usage(workspace_id, created_at DESC);
   `);
   const agentColumns = conn.pragma("table_info(agents)") as Array<{ name: string }>;
   if (!agentColumns.some((column) => column.name === "workspace_id")) {
@@ -248,6 +290,13 @@ function db(): Database.Database {
   if (!runColumns.some((column) => column.name === "cancel_requested")) {
     conn.exec(`ALTER TABLE runs ADD COLUMN cancel_requested INTEGER NOT NULL DEFAULT 0`);
   }
+  if (!runColumns.some((column) => column.name === "subscription_connection_id")) {
+    conn.exec(`ALTER TABLE runs ADD COLUMN subscription_connection_id TEXT`);
+  }
+  const subscriptionColumns = conn.pragma("table_info(subscription_connections)") as Array<{ name: string }>;
+  if (!subscriptionColumns.some((column) => column.name === "auth_mode")) {
+    conn.exec(`ALTER TABLE subscription_connections ADD COLUMN auth_mode TEXT NOT NULL DEFAULT 'oauth_token'`);
+  }
   const keyColumns = conn.pragma("table_info(workspace_keys)") as Array<{ name: string }>;
   if (!keyColumns.some((column) => column.name === "role")) {
     conn.exec(`ALTER TABLE workspace_keys ADD COLUMN role TEXT NOT NULL DEFAULT 'developer'`);
@@ -265,6 +314,10 @@ function db(): Database.Database {
   }
   _db = conn;
   return conn;
+}
+
+export function localDatabase(): Database.Database {
+  return db();
 }
 
 export function getSetting(key: string): string | null {
@@ -1108,6 +1161,7 @@ export interface RunRow {
   progress: RunProgress | null;
   report: RunReport | null;
   error: string | null;
+  subscriptionConnectionId?: string | null;
   createdAt: number;
 }
 
@@ -1122,6 +1176,7 @@ interface RawRow {
   progress_json: string | null;
   report_json: string | null;
   error: string | null;
+  subscription_connection_id: string | null;
   created_at: number;
 }
 
@@ -1137,6 +1192,7 @@ function hydrate(row: RawRow): RunRow {
     progress: row.progress_json ? (JSON.parse(row.progress_json) as RunProgress) : null,
     report: row.report_json ? (JSON.parse(row.report_json) as RunReport) : null,
     error: row.error,
+    subscriptionConnectionId: row.subscription_connection_id,
     createdAt: row.created_at,
   };
 }
@@ -1150,10 +1206,11 @@ export function createRun(input: {
   endpointUrl: string;
   createdAt: number;
   status?: RunStatus;
+  subscriptionConnectionId?: string;
 }): void {
   db().prepare(
-    `INSERT INTO runs (id, workspace_id, agent_id, agent_name, client_name, endpoint_url, status, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO runs (id, workspace_id, agent_id, agent_name, client_name, endpoint_url, status, subscription_connection_id, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     input.id,
     input.workspaceId ?? "workspace_local",
@@ -1162,6 +1219,7 @@ export function createRun(input: {
     input.clientName,
     input.endpointUrl,
     input.status ?? "running",
+    input.subscriptionConnectionId ?? null,
     input.createdAt,
   );
 }

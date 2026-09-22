@@ -217,6 +217,7 @@ export function getAgentDashboard(workspaceId = getDefaultWorkspace().id): Agent
 export function toStartRunInput(
   agent: AgentRow,
   config?: Partial<RunConfig>,
+  subscriptionConnectionId?: string,
 ): StartRunInput {
   const connection: AgentConnection = {
     endpointUrl: agent.endpointUrl,
@@ -236,6 +237,7 @@ export function toStartRunInput(
     mode: agent.mode && agent.mode !== "auto" ? agent.mode : undefined,
     tools: agent.tools,
     config,
+    subscriptionConnectionId,
   };
 }
 

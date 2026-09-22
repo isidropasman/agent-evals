@@ -17,6 +17,7 @@ export interface RegressionGateInput {
   suiteId?: string;
   version?: string;
   concurrency?: number;
+  subscriptionConnectionId?: string;
 }
 
 export type RunRegressionGateResult =
@@ -43,7 +44,7 @@ export async function runWorkspaceRegressionGate(
   const results = await mapBounded(
     selected.value,
     Math.min(MAX_CONCURRENCY, Math.max(1, Math.floor(input.concurrency ?? DEFAULT_CONCURRENCY))),
-    async (regressionCase) => replayAndClassify(workspaceId, regressionCase, baselineCases.get(regressionCase.id)?.status ?? null),
+    async (regressionCase) => replayAndClassify(workspaceId, regressionCase, baselineCases.get(regressionCase.id)?.status ?? null, input.subscriptionConnectionId),
   );
   for (const result of results) recordRegressionGateCase(workspaceId, run.id, result);
 
@@ -73,9 +74,10 @@ async function replayAndClassify(
   workspaceId: string,
   regressionCase: RegressionCaseRecord,
   baselineStatus: RegressionGateCaseResult["baselineStatus"],
+  subscriptionConnectionId?: string,
 ): Promise<RegressionGateCaseResult> {
   try {
-    const replay = await executeRegressionCase(workspaceId, regressionCase.id);
+    const replay = await executeRegressionCase(workspaceId, regressionCase.id, subscriptionConnectionId);
     if (replay.ok) {
       return {
         caseId: regressionCase.id,

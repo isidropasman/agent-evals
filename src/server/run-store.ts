@@ -1,9 +1,9 @@
 import type { AgentConnection } from "@/engine/connector";
-import { defaultProviders, RunAbortedError, runEval } from "@/engine/runner";
+import { RunAbortedError, runEval } from "@/engine/runner";
 import type { EvalMode, RunConfig, ToolDefinition } from "@/engine/types";
 import { completeRun, createRun, failRun, getRun, markRunRunning, updateProgress } from "./db";
 import { startBoundedBatch } from "./batch";
-import { resolveKey } from "./keys";
+import { resolveEvaluationProviders } from "./eval-providers";
 import { sharedDatabaseEnabled } from "./shared-db";
 import { sharedCompleteRun, sharedFailRun, sharedInsertRun, sharedIsRunCancellationRequested, sharedMarkRunRunning, sharedUpdateRunProgress } from "./shared-store";
 
@@ -20,6 +20,7 @@ export interface StartRunInput {
   /** Tools the agent can call, if any — Gauntlet mocks their results. */
   tools?: ToolDefinition[];
   config?: Partial<RunConfig>;
+  subscriptionConnectionId?: string;
 }
 
 const controllers = new Map<string, AbortController>();
@@ -73,11 +74,6 @@ export async function startBatchRunAsync(tasks: readonly BatchRunTask[]): Promis
 }
 
 async function executeRun(id: string, input: StartRunInput): Promise<void> {
-
-  const providers = defaultProviders(
-    resolveKey("anthropic") ?? undefined,
-    resolveKey("openai") ?? undefined,
-  );
   const controller = new AbortController();
   controllers.set(id, controller);
   const cancellationPoller = sharedDatabaseEnabled() && input.workspaceId
@@ -90,6 +86,15 @@ async function executeRun(id: string, input: StartRunInput): Promise<void> {
   cancellationPoller?.unref();
 
   try {
+    const providers = await resolveEvaluationProviders({
+      workspaceId: input.workspaceId,
+      subscriptionConnectionId: input.subscriptionConnectionId,
+      runId: id,
+    });
+    if (!providers.ok) {
+      await failRunForWorkspace(id, input.workspaceId, "subscription unavailable");
+      return;
+    }
     if (sharedDatabaseEnabled() && input.workspaceId && await sharedIsRunCancellationRequested(input.workspaceId, id)) controller.abort();
     const result = await runEval(
       {
@@ -102,7 +107,7 @@ async function executeRun(id: string, input: StartRunInput): Promise<void> {
         signal: controller.signal,
         onProgress: (p) => { void updateRunProgress(id, input.workspaceId, p); },
       },
-      providers,
+      providers.value,
     );
     if (result.ok) {
       const completed = await completeRunForWorkspace(id, input.workspaceId, result.value);
@@ -124,9 +129,9 @@ async function executeRun(id: string, input: StartRunInput): Promise<void> {
 
 async function insertRun(id: string, input: StartRunInput, status: "queued" | "running", createdAt = Date.now()): Promise<boolean> {
   if (sharedDatabaseEnabled() && input.workspaceId) {
-    return sharedInsertRun({ id, workspaceId: input.workspaceId, agentId: input.agentId, agentName: input.agentName, clientName: input.clientName, endpointUrl: input.connection.endpointUrl, createdAt, status });
+    return sharedInsertRun({ id, workspaceId: input.workspaceId, agentId: input.agentId, agentName: input.agentName, clientName: input.clientName, endpointUrl: input.connection.endpointUrl, createdAt, status, subscriptionConnectionId: input.subscriptionConnectionId });
   }
-  createRun({ id, workspaceId: input.workspaceId, agentId: input.agentId, agentName: input.agentName, clientName: input.clientName, endpointUrl: input.connection.endpointUrl, createdAt, status });
+  createRun({ id, workspaceId: input.workspaceId, agentId: input.agentId, agentName: input.agentName, clientName: input.clientName, endpointUrl: input.connection.endpointUrl, createdAt, status, subscriptionConnectionId: input.subscriptionConnectionId });
   return true;
 }
 

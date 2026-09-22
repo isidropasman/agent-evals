@@ -154,6 +154,23 @@ await gauntlet.ingestTrace({
   status: "ok",
   occurredAt: Date.now(),
 });
+
+const subscriptions = await gauntlet.listSubscriptions();
+if (subscriptions.ok && subscriptions.value.connections[0]) {
+  await gauntlet.runAgent(agent.value.id, {
+    suite: "balanced",
+    scenarioCount: 10,
+    k: 1,
+    subscriptionConnectionId: subscriptions.value.connections[0].id,
+  });
+}
+
+// Localmente, Codex usa la sesión ChatGPT administrada por Codex CLI.
+// Gauntlet no recibe ni guarda tokens.
+const codex = await gauntlet.connectCodex();
+if (codex.ok) {
+  await gauntlet.runAgent(agent.value.id, { subscriptionConnectionId: codex.value.connection.id });
+}
 ```
 
 The same workspace is available through `POST /api/mcp` for MCP clients. Configure the client with the endpoint URL and `Authorization: Bearer <GAUNTLET_API_KEY>`, then use `list_agents`, `register_agent`, `run_suite`, `get_run`, `get_trace`, `list_cases`, `promote_trace`, `replay_case`, and `run_gate`. MCP is the control surface; the trace API remains independent so CI jobs and agent runtimes can report evidence without an LLM client.
@@ -163,6 +180,7 @@ The authenticated read API makes the data plane composable too:
 ```text
 GET /api/v1/agents              fleet state + latest run/trace summaries
 GET /api/v1/runs?agentId=...    run status, progress, score and certification
+POST /api/v1/runs               starts an eval; accepts subscriptionConnectionId
 GET /api/v1/traces?limit=50    recent trace summaries (optionally per agent)
 GET /api/v1/cases                regression cases (assertions promoted from traces)
 POST /api/v1/cases/from-trace    promote one redacted trace into a case
@@ -171,7 +189,7 @@ GET /api/v1/gates                 recent gate history and version baselines
 POST /api/v1/gates                run selected/all cases with bounded concurrency
 ```
 
-These endpoints are workspace-scoped and return summaries only. Raw inputs, outputs, tool payloads and credentials stay server-side; this is intentional so an observability token can power automation without becoming a transcript exfiltration token.
+These endpoints are workspace-scoped and return summaries only. Raw inputs, outputs, tool payloads and credentials stay server-side; this is intentional so an observability token can power automation without becoming a transcript exfiltration token. `POST /api/v1/subscriptions/codex/start` connects the local Codex session through `account/read`; MCP exposes the same operation as `connect_codex` and the CLI as `gauntlet codex-connect`.
 
 ### From observed failure to regression gate
 
@@ -182,7 +200,7 @@ Replay sends that input once to the configured agent endpoint and evaluates the 
 The CLI exposes the same gate:
 
 ```bash
-gauntlet replay --case-id <id> --api-key "$GAUNTLET_API_KEY"
+gauntlet replay --case-id <id> --api-key "$GAUNTLET_API_KEY" --subscription-id <connection-id>
 ```
 
 This is the practical difference between Gauntlet and asking an LLM to review a prompt: the input is captured at the system boundary, sensitive fields are redacted before persistence, the same endpoint is replayed, the judge contract is binary, and the verdict becomes a versionable signal that can run in CI.
@@ -196,6 +214,7 @@ gauntlet gate \
   --base-url "$GAUNTLET_URL" \
   --api-key "$GAUNTLET_API_KEY" \
   --version "$GITHUB_SHA" \
+  --subscription-id "$GAUNTLET_SUBSCRIPTION_ID" \
   --output agent-eval-report.json
 ```
 
@@ -363,15 +382,16 @@ The current committed run found all 7 planted defects and reached 98% judge reca
 
 ```bash
 pnpm install
-# ANTHROPIC_API_KEY is required for real evaluation runs.
 pnpm dev
 ```
 
 Open `http://localhost:3000/dashboard` to register your fleet. Start with the quick preset (`10 scenarios × 1`) to compare endpoints, then use the existing full run flow for a credentialed `50 × 4` certification run.
 
+En el dashboard podés conectar GitHub Copilot o, cuando el bridge local está disponible, Codex. GitHub usa OAuth server-side y guarda el token cifrado con `GAUNTLET_SECRETS_KEY`. Codex usa `codex app-server --stdio` y la sesión ChatGPT administrada por Codex CLI: Gauntlet sólo guarda metadata y registra requests/tokens estimados por conexión. Antes de conectar, ejecutá `codex login`; nunca copies `~/.codex/auth.json`. El bridge Codex es local y no funciona desde una función Vercel remota; en producción queda disponible el flujo de API key o GitHub Copilot. SuperGrok no está habilitado hasta contar con un flujo oficial.
+
 The web flow can run against the intentionally flawed demo agent included in the repository.
 
-The demo removes the need to connect your own agent, but a full LLM-backed evaluation still requires `ANTHROPIC_API_KEY`. Without credentials, you can validate the UI, connection flow, and mock benchmark only.
+El demo removes the need to connect your own agent. Para una evaluación LLM real podés usar una suscripción conectada o el fallback existente con `ANTHROPIC_API_KEY` (`OPENAI_API_KEY` es opcional y mueve el juez a otra familia).
 
 ### Evidence from the running app
 
@@ -430,7 +450,7 @@ A minimal config:
 
 The same example is checked in at [`docs/examples/gauntlet.config.json`](docs/examples/gauntlet.config.json), with its prompt in [`docs/examples/prompt.txt`](docs/examples/prompt.txt). Copy both files into an agent repository, then change the endpoint, startup command, and prompt.
 
-The CLI can start the agent with `startCommand`, wait for `readyPath`, shut down the process, and write `gauntlet-report.json`. `ANTHROPIC_API_KEY` is required for real runs; `OPENAI_API_KEY` is optional and moves the judge to another model family.
+The CLI can start the agent with `startCommand`, wait for `readyPath`, shut down the process, and write `gauntlet-report.json`. La conexión OAuth de suscripción se configura en el dashboard; el CLI/CI mantiene el camino por `ANTHROPIC_API_KEY`, con `OPENAI_API_KEY` opcional para mover el juez a otra familia.
 
 ## Stack
 

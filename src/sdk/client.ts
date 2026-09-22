@@ -134,6 +134,41 @@ export interface SdkGateSummary extends Omit<SdkGateReport, "cases" | "workspace
   completedAt: number | null;
 }
 
+export interface SdkRunOptions {
+  scenarioCount?: 10 | 50;
+  k?: 1 | 4;
+  suite?: "balanced" | "safety" | "reliability" | "tools";
+  subscriptionConnectionId?: string;
+}
+
+export interface SdkSubscriptionConnection {
+  id: string;
+  provider: "github_copilot" | "codex" | "supergrok";
+  accountLogin: string;
+  displayName: string;
+  status: "connected" | "expired" | "revoked" | "error";
+  authMode: "oauth_token" | "codex_local";
+  expiresAt: number | null;
+  lastError: string | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface SdkSubscriptionUsage {
+  id: string;
+  connectionId: string;
+  runId: string | null;
+  requestKey: string;
+  model: string;
+  status: "completed" | "error";
+  inputTokens: number;
+  outputTokens: number;
+  tokenSource: "estimated" | "provider";
+  error: string | null;
+  createdAt: number;
+  completedAt: number;
+}
+
 export type ClientResult<T> =
   | { ok: true; value: T }
   | { ok: false; error: { kind: "network" | "http" | "invalid_response"; message: string; status?: number } };
@@ -148,11 +183,15 @@ export interface GauntletClient {
   listAgents(): Promise<ClientResult<{ agents: SdkAgent[] }>>;
   listTraces(input?: { agentId?: string; limit?: number }): Promise<ClientResult<{ traces: SdkTraceSummary[] }>>;
   listRuns(input?: { agentId?: string }): Promise<ClientResult<{ runs: SdkRunSummary[] }>>;
+  runAgent(agentId: string, input?: SdkRunOptions): Promise<ClientResult<{ id: string; agentId: string }>>;
   listCases(): Promise<ClientResult<{ cases: SdkRegressionCaseSummary[] }>>;
   promoteTrace(input: { agentId: string; traceId: string; name?: string }): Promise<ClientResult<SdkRegressionCaseSummary>>;
-  replayCase(caseId: string): Promise<ClientResult<{ case: SdkRegressionCaseSummary; replay: SdkRegressionReplay }>>;
-  runGate(input?: { caseIds?: string[]; suiteId?: string; version?: string; concurrency?: number }): Promise<ClientResult<SdkGateReport>>;
+  replayCase(caseId: string, input?: { subscriptionConnectionId?: string }): Promise<ClientResult<{ case: SdkRegressionCaseSummary; replay: SdkRegressionReplay }>>;
+  runGate(input?: { caseIds?: string[]; suiteId?: string; version?: string; concurrency?: number; subscriptionConnectionId?: string }): Promise<ClientResult<SdkGateReport>>;
   listGates(): Promise<ClientResult<{ gates: SdkGateSummary[] }>>;
+  listSubscriptions(): Promise<ClientResult<{ connections: SdkSubscriptionConnection[]; usage: SdkSubscriptionUsage[] }>>;
+  connectCodex(): Promise<ClientResult<{ connection: SdkSubscriptionConnection }>>;
+  disconnectSubscription(connectionId: string): Promise<ClientResult<{ ok: true }>>;
 }
 
 export function createGauntletClient(input: {
@@ -172,12 +211,28 @@ export function createGauntletClient(input: {
     listAgents: () => get(fetchImpl, `${baseUrl}/api/v1/agents`, input.apiKey),
     listTraces: (query) => get(fetchImpl, `${baseUrl}/api/v1/traces${queryString(query)}`, input.apiKey),
     listRuns: (query) => get(fetchImpl, `${baseUrl}/api/v1/runs${queryString(query)}`, input.apiKey),
+    runAgent: (agentId, runInput) => request(fetchImpl, `${baseUrl}/api/v1/runs`, input.apiKey, { agentId, ...runInput }, null),
     listCases: () => get(fetchImpl, `${baseUrl}/api/v1/cases`, input.apiKey),
     promoteTrace: (promotion) => request(fetchImpl, `${baseUrl}/api/v1/cases/from-trace`, input.apiKey, promotion, "case"),
-    replayCase: (caseId) => request(fetchImpl, `${baseUrl}/api/v1/cases/${encodeURIComponent(caseId)}/replay`, input.apiKey, {}, null),
+    replayCase: (caseId, replayInput) => request(fetchImpl, `${baseUrl}/api/v1/cases/${encodeURIComponent(caseId)}/replay`, input.apiKey, replayInput ?? {}, null),
     runGate: (gateInput) => runGateRequest(fetchImpl, `${baseUrl}/api/v1/gates`, input.apiKey, gateInput ?? {}),
     listGates: () => get(fetchImpl, `${baseUrl}/api/v1/gates`, input.apiKey),
+    listSubscriptions: () => get(fetchImpl, `${baseUrl}/api/v1/subscriptions`, input.apiKey),
+    connectCodex: () => request(fetchImpl, `${baseUrl}/api/v1/subscriptions/codex/start`, input.apiKey, {}, null),
+    disconnectSubscription: (connectionId) => remove(fetchImpl, `${baseUrl}/api/v1/subscriptions/${encodeURIComponent(connectionId)}`, input.apiKey),
   };
+}
+
+async function remove<T>(fetchImpl: typeof fetch, url: string, apiKey: string): Promise<ClientResult<T>> {
+  let response: Response;
+  try {
+    response = await fetchImpl(url, { method: "DELETE", headers: { authorization: `Bearer ${apiKey}` } });
+  } catch (error: unknown) {
+    return { ok: false, error: { kind: "network", message: error instanceof Error ? error.message : "network error" } };
+  }
+  const json: unknown = await response.json().catch(() => null);
+  if (!response.ok) return { ok: false, error: { kind: "http", message: errorMessage(json), status: response.status } };
+  return isRecord(json) && json.ok === true ? { ok: true, value: json as T } : { ok: false, error: { kind: "invalid_response", message: "server returned an invalid response" } };
 }
 
 async function runGateRequest(fetchImpl: typeof fetch, url: string, apiKey: string, body: unknown): Promise<ClientResult<SdkGateReport>> {
@@ -239,7 +294,7 @@ async function request<T>(
   url: string,
   apiKey: string,
   body: unknown,
-  unwrap: "auto" | "agent" | "key" | "case" | null = "auto",
+  unwrap: "auto" | "agent" | "key" | "case" | "connection" | null = "auto",
 ): Promise<ClientResult<T>> {
   let response: Response;
   try {
@@ -254,7 +309,7 @@ async function request<T>(
   const json: unknown = await response.json().catch(() => null);
   if (!response.ok) return { ok: false, error: { kind: "http", message: errorMessage(json), status: response.status } };
   if (!isRecord(json)) return { ok: false, error: { kind: "invalid_response", message: "server returned an invalid response" } };
-  const value = unwrap === null ? json : unwrap === "agent" ? json.agent : unwrap === "key" ? json.key : unwrap === "case" ? json.case : "agent" in json ? json.agent : "key" in json ? json.key : json;
+  const value = unwrap === null ? json : unwrap === "agent" ? json.agent : unwrap === "key" ? json.key : unwrap === "case" ? json.case : unwrap === "connection" ? json.connection : "agent" in json ? json.agent : "key" in json ? json.key : json;
   return { ok: true, value: value as T };
 }
 

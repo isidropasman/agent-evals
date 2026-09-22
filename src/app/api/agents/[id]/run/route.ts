@@ -8,6 +8,7 @@ import { getSharedDefaultWorkspace } from "@/server/shared-workspace-store";
 import { runConfigForPreset, toStartRunInput } from "@/server/agent-store";
 import { startRunAsync } from "@/server/run-store";
 import { getDefaultWorkspace } from "@/server/workspace-store";
+import { subscriptionConnectionAvailable } from "@/server/subscription-store";
 
 export const runtime = "nodejs";
 
@@ -15,6 +16,7 @@ interface RunPreset {
   scenarioCount: number;
   k: number;
   suite: TestSuite;
+  subscriptionConnectionId?: string;
 }
 
 export async function POST(
@@ -36,9 +38,12 @@ export async function POST(
 
   const preset = await parsePreset(req);
   if (!preset.ok) return NextResponse.json({ error: preset.error }, { status: 400 });
+  if (preset.value.subscriptionConnectionId && !await subscriptionConnectionAvailable(workspaceId, preset.value.subscriptionConnectionId)) {
+    return NextResponse.json({ error: "subscription unavailable" }, { status: 422 });
+  }
 
   const id = randomUUID();
-  const started = await startRunAsync(id, toStartRunInput(agent, runConfigForPreset(preset.value.scenarioCount, preset.value.k, preset.value.suite)));
+  const started = await startRunAsync(id, toStartRunInput(agent, runConfigForPreset(preset.value.scenarioCount, preset.value.k, preset.value.suite), preset.value.subscriptionConnectionId));
   if (!started) return NextResponse.json({ error: "no se pudo crear la corrida" }, { status: 503 });
   return NextResponse.json({ id, agentId }, { status: 201 });
 }
@@ -62,7 +67,13 @@ async function parsePreset(
   if (!isPresetNumber(scenarioCount, [10, 50]) || !isPresetNumber(k, [1, 4]) || !isTestSuite(suite)) {
     return { ok: false, error: "scenarioCount debe ser 10/50 y k debe ser 1/4" };
   }
-  return { ok: true, value: { scenarioCount, k, suite } };
+  const subscriptionConnectionId = body.subscriptionConnectionId === undefined
+    ? undefined
+    : typeof body.subscriptionConnectionId === "string" && body.subscriptionConnectionId.trim()
+      ? body.subscriptionConnectionId.trim()
+      : null;
+  if (subscriptionConnectionId === null) return { ok: false, error: "subscriptionConnectionId debe ser un string no vacío" };
+  return { ok: true, value: { scenarioCount, k, suite, subscriptionConnectionId } };
 }
 
 function isPresetNumber(value: unknown, allowed: readonly number[]): value is number {

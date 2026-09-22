@@ -124,6 +124,22 @@ interface SuiteSummary {
   agentId: string | null;
 }
 
+type SubscriptionProvider = "github_copilot" | "codex" | "supergrok";
+type SubscriptionStatus = "connected" | "expired" | "revoked" | "error";
+
+interface SubscriptionSummary {
+  id: string;
+  provider: SubscriptionProvider;
+  accountLogin: string;
+  displayName: string;
+  status: SubscriptionStatus;
+  authMode: "oauth_token" | "codex_local";
+  expiresAt: number | null;
+  lastError: string | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
 const EMPTY_OBSERVABILITY: ObservabilityStats = {
   total: 0,
   last24h: 0,
@@ -170,6 +186,9 @@ export function Dashboard() {
   const [gates, setGates] = useState<GateSummary[]>([]);
   const [datasets, setDatasets] = useState<DatasetSummary[]>([]);
   const [suites, setSuites] = useState<SuiteSummary[]>([]);
+  const [subscriptions, setSubscriptions] = useState<SubscriptionSummary[]>([]);
+  const [selectedSubscriptionId, setSelectedSubscriptionId] = useState<string | null>(null);
+  const [codexAvailable, setCodexAvailable] = useState(false);
   const [runningGate, setRunningGate] = useState(false);
   const [saving, setSaving] = useState(false);
   const [running, setRunning] = useState<string | "all" | null>(null);
@@ -184,7 +203,7 @@ export function Dashboard() {
       if (!isDashboardPayload(json)) throw new Error("respuesta inválida del dashboard");
       setRows(json.agents);
       setObservability(isObservabilityStats(json.observability) ? json.observability : EMPTY_OBSERVABILITY);
-      await Promise.all([loadRecentTraces(), loadRegressionCases(), loadGates(), loadCatalog()]);
+      await Promise.all([loadRecentTraces(), loadRegressionCases(), loadGates(), loadCatalog(), loadSubscriptions()]);
     } catch (error: unknown) {
       setNotice(error instanceof Error ? error.message : "no se pudo leer el dashboard");
     } finally {
@@ -225,6 +244,39 @@ export function Dashboard() {
     }
   }
 
+  async function loadSubscriptions() {
+    const response = await fetch("/api/subscriptions", { cache: "no-store" });
+    if (!response.ok) return;
+    const json: unknown = await response.json();
+    if (!isSubscriptionsPayload(json)) return;
+    setSubscriptions(json.connections);
+    setCodexAvailable(json.providers?.some((provider) => provider.id === "codex" && provider.status === "available") ?? false);
+    setSelectedSubscriptionId((current) => current && json.connections.some((item) => item.id === current)
+      ? current
+      : json.connections.find((item) => item.status === "connected")?.id ?? null);
+  }
+
+  async function connectCodex() {
+    const response = await fetch("/api/subscriptions/codex/start", { method: "POST" });
+    const json = (await response.json()) as { connection?: SubscriptionSummary; error?: string };
+    if (!response.ok) {
+      setNotice(json.error ?? "no se pudo conectar Codex");
+      return;
+    }
+    setNotice(`Codex conectado · ${json.connection?.displayName ?? "sesión local"}`);
+    await loadSubscriptions();
+  }
+
+  async function disconnectSubscription(id: string) {
+    const response = await fetch(`/api/subscriptions/${encodeURIComponent(id)}`, { method: "DELETE" });
+    if (!response.ok) {
+      setNotice("no se pudo desconectar la suscripción");
+      return;
+    }
+    setNotice("suscripción desconectada · los evals vuelven al fallback configurado");
+    await loadSubscriptions();
+  }
+
   async function runGate() {
     setRunningGate(true);
     setNotice(null);
@@ -232,7 +284,7 @@ export function Dashboard() {
       const response = await fetch("/api/gates", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ version: `local-${Date.now()}`, concurrency: 4 }),
+        body: JSON.stringify({ version: `local-${Date.now()}`, concurrency: 4, subscriptionConnectionId: selectedSubscriptionId ?? undefined }),
       });
       const json = (await response.json()) as { error?: string; status?: GateSummary["status"] | "queued"; passed?: number; total?: number; regressions?: number; gateRunId?: string };
       if (!response.ok) throw new Error(json.error ?? "no se pudo ejecutar el gate");
@@ -288,7 +340,11 @@ export function Dashboard() {
     setReplayingCase(caseId);
     setNotice(null);
     try {
-      const response = await fetch(`/api/cases/${encodeURIComponent(caseId)}/replay`, { method: "POST" });
+      const response = await fetch(`/api/cases/${encodeURIComponent(caseId)}/replay`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ subscriptionConnectionId: selectedSubscriptionId ?? undefined }),
+      });
       const json = (await response.json()) as { error?: string; replay?: { passed: boolean } };
       if (!response.ok) throw new Error(json.error ?? "no se pudo reejecutar el caso");
       setNotice(json.replay?.passed ? "Replay pass · el comportamiento sigue cubierto" : "Replay fail · regresión detectada");
@@ -336,7 +392,7 @@ export function Dashboard() {
       const response = await fetch(`/api/agents/${agentId}/run`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ scenarioCount: 10, k: 1, suite }),
+        body: JSON.stringify({ scenarioCount: 10, k: 1, suite, subscriptionConnectionId: selectedSubscriptionId ?? undefined }),
       });
       const json = (await response.json()) as { error?: string };
       if (!response.ok) throw new Error(json.error ?? "no se pudo iniciar el eval");
@@ -356,7 +412,7 @@ export function Dashboard() {
       const response = await fetch("/api/agents/run-all", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ scenarioCount: 10, k: 1, suite }),
+        body: JSON.stringify({ scenarioCount: 10, k: 1, suite, subscriptionConnectionId: selectedSubscriptionId ?? undefined }),
       });
       const json = (await response.json()) as { error?: string; queued?: number };
       if (!response.ok) throw new Error(json.error ?? "no se pudo iniciar el batch");
@@ -443,6 +499,15 @@ export function Dashboard() {
         </div>
       </section>
 
+      <SubscriptionConnections
+        connections={subscriptions}
+        selectedId={selectedSubscriptionId}
+        codexAvailable={codexAvailable}
+        onSelect={setSelectedSubscriptionId}
+        onConnectCodex={() => void connectCodex()}
+        onDisconnect={(id) => void disconnectSubscription(id)}
+      />
+
       {notice ? (
         <div className="mt-8 border px-4 py-3 text-xs" style={{ borderColor: "var(--color-signal)", color: "var(--color-signal)" }} role="status" aria-live="polite">
           {notice}
@@ -507,6 +572,77 @@ function ControlPlaneCatalog({ datasets, suites }: { datasets: DatasetSummary[];
       </div>
     </section>
   );
+}
+
+function SubscriptionConnections({
+  connections,
+  selectedId,
+  codexAvailable,
+  onSelect,
+  onConnectCodex,
+  onDisconnect,
+}: {
+  connections: SubscriptionSummary[];
+  selectedId: string | null;
+  codexAvailable: boolean;
+  onSelect: (id: string | null) => void;
+  onConnectCodex: () => void;
+  onDisconnect: (id: string) => void;
+}) {
+  const active = connections.filter((connection) => connection.status === "connected");
+  return (
+    <section className="mt-12 border-y py-8" style={{ borderColor: "var(--color-line-bright)" }}>
+      <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+        <div>
+          <div className="label" style={{ color: "var(--color-signal)" }}>subscription pool</div>
+          <h2 className="font-display mt-3 text-2xl font-800">Conectá una suscripción</h2>
+          <p className="mt-2 max-w-xl text-xs leading-relaxed" style={{ color: "var(--color-ink-faint)" }}>
+            Los evals pueden consumir la cuenta seleccionada. Si no elegís ninguna, se mantiene el proveedor por API key configurado en el servidor.
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <a href="/api/subscriptions/github/start" className="border px-4 py-2 text-xs uppercase tracking-widest transition-colors hover:border-[var(--color-signal)] hover:text-[var(--color-signal)]">
+            + conectar GitHub Copilot
+          </a>
+          {codexAvailable ? <button type="button" onClick={onConnectCodex} className="border px-4 py-2 text-xs uppercase tracking-widest transition-colors hover:border-[var(--color-signal)] hover:text-[var(--color-signal)]">+ conectar Codex</button> : null}
+        </div>
+      </div>
+      <div className="mt-6 grid gap-px border sm:grid-cols-3" style={{ borderColor: "var(--color-line-bright)" }}>
+        <SubscriptionProviderCard label="GitHub Copilot" detail="Usa tu suscripción Copilot" status="available" />
+        <SubscriptionProviderCard label="Codex" detail={codexAvailable ? "Usa tu sesión local de Codex" : "Bridge local no disponible"} status={codexAvailable ? "available" : "unavailable"} />
+        <SubscriptionProviderCard label="SuperGrok" detail="Flujo oficial pendiente de validar" status="unavailable" />
+      </div>
+      {connections.length > 0 ? (
+        <div className="mt-6 space-y-2">
+          <div className="label">cuentas conectadas · {active.length} activas</div>
+          {connections.map((connection) => (
+            <div key={connection.id} className="flex flex-wrap items-center justify-between gap-3 border bg-[var(--color-panel)] px-4 py-3 text-xs">
+              <button
+                type="button"
+                onClick={() => onSelect(connection.status === "connected" ? connection.id : selectedId)}
+                className="flex min-w-0 items-center gap-3 text-left"
+                disabled={connection.status !== "connected"}
+              >
+                <span className="h-2 w-2 shrink-0" style={{ background: connection.status === "connected" ? "var(--color-signal)" : "var(--color-warn)" }} />
+                <span className="truncate">{connection.displayName} · @{connection.accountLogin}</span>
+                <span className="label">{connection.status}</span>
+                {selectedId === connection.id ? <span className="label" style={{ color: "var(--color-signal)" }}>seleccionada</span> : null}
+              </button>
+              <button type="button" onClick={() => onDisconnect(connection.id)} className="label transition-colors hover:text-[var(--color-fail)]">desconectar</button>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="mt-6 border border-dashed p-4 text-xs" style={{ color: "var(--color-ink-faint)" }}>sin suscripciones conectadas · API key fallback activo si está configurado</div>
+      )}
+    </section>
+  );
+}
+
+function SubscriptionProviderCard({ label, detail, status }: { label: string; detail: string; status: "available" | "coming_soon" | "unavailable" }) {
+  const color = status === "available" ? "var(--color-signal)" : "var(--color-ink-faint)";
+  const text = status === "available" ? "conectar arriba" : status === "coming_soon" ? "próximamente" : "no disponible";
+  return <div className="bg-[var(--color-panel)] p-4"><div className="font-display text-lg font-800">{label}</div><div className="mt-1 text-xs" style={{ color: "var(--color-ink-faint)" }}>{detail}</div><div className="label mt-4" style={{ color }}>{text}</div></div>;
 }
 
 function Metric({ value, label, tone = "default" }: { value: number | string; label: string; tone?: "default" | "warn" | "signal" }) {
@@ -775,4 +911,8 @@ function isDatasetPayload(value: unknown): value is { datasets: DatasetSummary[]
 
 function isSuitePayload(value: unknown): value is { suites: SuiteSummary[] } {
   return typeof value === "object" && value !== null && Array.isArray((value as { suites?: unknown }).suites);
+}
+
+function isSubscriptionsPayload(value: unknown): value is { connections: SubscriptionSummary[]; providers?: Array<{ id: string; status: string }> } {
+  return typeof value === "object" && value !== null && Array.isArray((value as { connections?: unknown }).connections);
 }

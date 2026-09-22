@@ -1,8 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { runRegressionReplay, type RegressionReplayResult } from "@/engine/replay";
-import { defaultProviders } from "@/engine/runner";
+import { resolveEvaluationProviders } from "./eval-providers";
 import { getAgent } from "./db";
-import { resolveKey } from "./keys";
 import {
   getWorkspaceRegressionCase,
   saveRegressionReplay,
@@ -26,6 +25,7 @@ export type ExecuteRegressionResult =
 export async function executeRegressionCase(
   workspaceId: string,
   caseId: string,
+  subscriptionConnectionId?: string,
 ): Promise<ExecuteRegressionResult> {
   const regressionCase = getWorkspaceRegressionCase(workspaceId, caseId);
   if (!regressionCase) {
@@ -43,10 +43,8 @@ export async function executeRegressionCase(
     };
   }
 
-  const providers = defaultProviders(
-    resolveKey("anthropic") ?? undefined,
-    resolveKey("openai") ?? undefined,
-  );
+  const providers = await resolveEvaluationProviders({ workspaceId, subscriptionConnectionId, runId: `replay-${caseId}-${randomUUID()}` });
+  if (!providers.ok) return { ok: false, error: "replay_failed", message: "subscription unavailable" };
   const replay = await runRegressionReplay(
     {
       connection: {
@@ -59,8 +57,8 @@ export async function executeRegressionCase(
       sessionId: `regression-${regressionCase.id}-${randomUUID()}`,
       testCase: regressionCase,
     },
-    providers.judge,
-    providers.judgeModel,
+    providers.value.judge,
+    providers.value.judgeModel,
   );
   const runAt = Date.now();
   if (!replay.ok) {

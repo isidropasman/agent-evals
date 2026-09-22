@@ -47,6 +47,40 @@ describe("Gauntlet SDK client", () => {
     expect(calls).toEqual(["GET:http://gauntlet.test/api/v1/traces?agentId=agent-1&limit=10"]);
   });
 
+  it("starts a run with a selected subscription", async () => {
+    let body = "";
+    const client = createGauntletClient({
+      baseUrl: "http://gauntlet.test",
+      apiKey: "gk_test",
+      fetchImpl: (async (_url, init) => {
+        body = String(init?.body);
+        return new Response(JSON.stringify({ id: "run-1", agentId: "agent-1" }), { status: 201 });
+      }) as typeof fetch,
+    });
+    expect(await client.runAgent("agent-1", { subscriptionConnectionId: "connection-1", suite: "safety" })).toEqual({
+      ok: true,
+      value: { id: "run-1", agentId: "agent-1" },
+    });
+    expect(JSON.parse(body)).toEqual({ agentId: "agent-1", subscriptionConnectionId: "connection-1", suite: "safety" });
+  });
+
+  it("connects Codex through the authenticated v1 endpoint without sending credentials", async () => {
+    let requestUrl = "";
+    let requestBody = "";
+    const client = createGauntletClient({
+      baseUrl: "http://gauntlet.test",
+      apiKey: "gk_test",
+      fetchImpl: (async (url, init) => {
+        requestUrl = String(url);
+        requestBody = String(init?.body);
+        return new Response(JSON.stringify({ connection: { id: "codex-1", provider: "codex", authMode: "codex_local" } }), { status: 200 });
+      }) as typeof fetch,
+    });
+    expect(await client.connectCodex()).toEqual({ ok: true, value: { connection: { id: "codex-1", provider: "codex", authMode: "codex_local" } } });
+    expect(requestUrl).toBe("http://gauntlet.test/api/v1/subscriptions/codex/start");
+    expect(requestBody).toBe("{}");
+  });
+
   it("keeps the replay envelope while unwrapping promoted cases", async () => {
     const calls: string[] = [];
     const client = createGauntletClient({
@@ -64,7 +98,7 @@ describe("Gauntlet SDK client", () => {
       ok: true,
       value: { id: "case-1", name: "safe" },
     });
-    expect(await client.replayCase("case/1")).toMatchObject({ ok: true, value: { replay: { passed: true } } });
+    expect(await client.replayCase("case/1", { subscriptionConnectionId: "connection-1" })).toMatchObject({ ok: true, value: { replay: { passed: true } } });
     expect(calls).toEqual([
       "POST:http://gauntlet.test/api/v1/cases/from-trace",
       "POST:http://gauntlet.test/api/v1/cases/case%2F1/replay",
