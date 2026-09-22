@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { loadConfig, runConfigFrom } from "@/cli/config";
+import { parseGateArgs } from "@/cli/gate";
 import { passesGate } from "@/cli/report";
 import { waitForReady } from "@/cli/launch";
 import type { AgentConnection } from "@/engine/connector";
@@ -153,5 +154,41 @@ describe("waitForReady", () => {
     // 0s timeout → deadline already passed, one loop max
     const r = await waitForReady(conn, "/health", 0, async () => {});
     expect(r.ok).toBe(false);
+  });
+});
+
+describe("parseGateArgs", () => {
+  it("parses repeated case IDs and CI defaults", () => {
+    expect(parseGateArgs(["--api-key", "gk_test", "--case-id", "a", "--case-id", "b", "--concurrency", "4"], { GITHUB_SHA: "commit-ci" })).toEqual({
+      ok: true,
+      value: {
+        apiKey: "gk_test",
+        baseUrl: "http://localhost:3000",
+        caseIds: ["a", "b"],
+        version: "commit-ci",
+        concurrency: 4,
+        subscriptionConnectionId: undefined,
+        output: undefined,
+      },
+    });
+  });
+
+  it("rejects malformed gate flags before any network call", () => {
+    expect(parseGateArgs(["--api-key", "gk_test", "--concurrency", "9"])).toMatchObject({ ok: false });
+    expect(parseGateArgs(["--api-key", "gk_test", "--case-id"])).toMatchObject({ ok: false });
+    expect(parseGateArgs(["--api-key", "gk_test", "--base-url", "--output", "report.json"])).toEqual({ ok: false, error: "--base-url requiere un valor." });
+    expect(parseGateArgs(["--api-key", "gk_test", "--case-id", "a", "--case-id", "--version", "v1"])).toEqual({ ok: false, error: "--case-id requiere un valor." });
+    expect(parseGateArgs([], {})).toMatchObject({ ok: false });
+  });
+
+  it("keeps an error artifact contract available to CI", () => {
+    expect(parseGateArgs(["--api-key", "gk_test", "--output", "agent-eval-report.json"])).toMatchObject({ ok: true, value: { output: "agent-eval-report.json" } });
+  });
+
+  it("accepts a subscription connection for remote gates", () => {
+    expect(parseGateArgs(["--api-key", "gk_test", "--subscription-id", "connection-1"])).toMatchObject({
+      ok: true,
+      value: { subscriptionConnectionId: "connection-1" },
+    });
   });
 });

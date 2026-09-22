@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getRun } from "@/server/db";
 import { PrintButton } from "@/components/print-button";
+import { getDefaultWorkspace } from "@/server/workspace-store";
 
 function fmtDate(ts: number): string {
   const d = new Date(ts);
@@ -22,7 +23,7 @@ export default async function CertificatePage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const run = getRun(id);
+  const run = getRun(id, getDefaultWorkspace().id);
   if (!run || !run.report) notFound();
   const report = run.report;
 

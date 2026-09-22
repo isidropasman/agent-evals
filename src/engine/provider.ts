@@ -1,5 +1,10 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { CopilotClient } from "@github/copilot-sdk";
+import { createHash } from "node:crypto";
 import type { EngineResult } from "./types";
+import { estimateTokenCount } from "@/server/subscription-logic";
+import { recordUsage } from "@/server/subscription-store";
+import type { UsageLedgerEntry } from "@/server/subscription-types";
 
 export interface CompletionRequest {
   model: string;
@@ -10,8 +15,107 @@ export interface CompletionRequest {
 }
 
 export interface LlmProvider {
-  readonly family: "anthropic" | "openai" | "mock";
+  readonly family: "anthropic" | "openai" | "copilot" | "codex" | "mock";
   complete(req: CompletionRequest): Promise<EngineResult<string>>;
+}
+
+export interface CopilotSessionLike {
+  sendAndWait(input: { prompt: string }, timeout?: number): Promise<{ data: { content: string; outputTokens?: number } } | undefined>;
+  disconnect(): Promise<void>;
+}
+
+export interface CopilotClientLike {
+  start(): Promise<void>;
+  createSession(input: { model: string; systemMessage: { mode: "replace"; content: string } }): Promise<CopilotSessionLike>;
+  stop(): Promise<void>;
+}
+
+export interface CopilotProviderOptions {
+  token: string;
+  workspaceId: string;
+  connectionId: string;
+  runId?: string;
+  createClient?: (token: string) => CopilotClientLike;
+  recordUsage?: (entry: Omit<UsageLedgerEntry, "id">) => Promise<unknown>;
+  timeoutMs?: number;
+}
+
+export class CopilotProvider implements LlmProvider {
+  readonly family = "copilot" as const;
+  private readonly options: CopilotProviderOptions;
+
+  constructor(options: CopilotProviderOptions) {
+    this.options = options;
+  }
+
+  async complete(req: CompletionRequest): Promise<EngineResult<string>> {
+    const inputText = [req.system, ...req.messages.map((message) => message.content)].join("\n");
+    const inputEstimate = estimateTokenCount(inputText);
+    const requestKey = `${this.options.runId ?? "adhoc"}:${sha256(`${req.model}\n${inputText}`)}`;
+    const createClient = this.options.createClient ?? defaultCopilotClient;
+    const record = this.options.recordUsage ?? recordUsage;
+    let client: CopilotClientLike | null = null;
+    let session: CopilotSessionLike | null = null;
+    let output = "";
+    let outputTokens: number | undefined;
+    let error: { kind: "provider_error" | "provider_rate_limited"; message: string } | null = null;
+    try {
+      client = createClient(this.options.token);
+      await client.start();
+      session = await client.createSession({
+        model: req.model,
+        systemMessage: { mode: "replace", content: req.system },
+      });
+      const prompt = formatPrompt(req);
+      const response = await session.sendAndWait({ prompt }, this.options.timeoutMs ?? 120_000);
+      output = response?.data.content.trim() ?? "";
+      outputTokens = response?.data.outputTokens;
+      if (!output) error = { kind: "provider_error", message: "subscription provider returned an empty response" };
+    } catch (caught: unknown) {
+      const message = caught instanceof Error ? caught.message.toLowerCase() : "";
+      error = message.includes("429") || message.includes("rate limit") || message.includes("quota")
+        ? { kind: "provider_rate_limited", message: "subscription provider rate limit exceeded" }
+        : { kind: "provider_error", message: "subscription provider request failed" };
+    } finally {
+      if (session) await session.disconnect().catch(() => {});
+      if (client) await client.stop().catch(() => {});
+      const outputEstimate = estimateTokenCount(output);
+      await record({
+        workspaceId: this.options.workspaceId,
+        connectionId: this.options.connectionId,
+        runId: this.options.runId ?? null,
+        requestKey,
+        model: req.model,
+        status: error ? "error" : "completed",
+        inputTokens: inputEstimate.count,
+        outputTokens: outputTokens ?? outputEstimate.count,
+        tokenSource: outputTokens === undefined ? "estimated" : "provider",
+        error: error?.message ?? null,
+        createdAt: Date.now(),
+        completedAt: Date.now(),
+      }).catch(() => {});
+    }
+    return error ? { ok: false, error } : { ok: true, value: output };
+  }
+}
+
+function defaultCopilotClient(token: string): CopilotClientLike {
+  const client = new CopilotClient({ mode: "empty", gitHubToken: token, useLoggedInUser: false, logLevel: "error" });
+  return {
+    start: () => client.start(),
+    createSession: (input) => client.createSession(input),
+    stop: async () => { await client.stop(); },
+  };
+}
+
+function formatPrompt(req: CompletionRequest): string {
+  const transcript = req.messages.map((message) => `${message.role.toUpperCase()}: ${message.content}`).join("\n\n");
+  const schema = req.jsonSchema ? `\nRespond as JSON matching this schema:\n${JSON.stringify(req.jsonSchema)}` : "";
+  return `${transcript}${schema}`.trim();
+}
+
+function sha256(value: string): string {
+  return createHash("sha256").update(value).digest("hex").slice(0, 24);
 }
 
 export class AnthropicProvider implements LlmProvider {
@@ -61,7 +165,7 @@ export class AnthropicProvider implements LlmProvider {
       if (error instanceof Anthropic.RateLimitError) {
         return {
           ok: false,
-          error: { kind: "provider_rate_limited", message: error.message },
+          error: { kind: "provider_rate_limited", message: "provider rate limit exceeded" },
         };
       }
       if (error instanceof Anthropic.APIError) {
@@ -69,7 +173,7 @@ export class AnthropicProvider implements LlmProvider {
           ok: false,
           error: {
             kind: "provider_error",
-            message: `API error ${error.status}: ${error.message}`,
+            message: `provider API error (HTTP ${error.status})`,
           },
         };
       }
@@ -77,7 +181,7 @@ export class AnthropicProvider implements LlmProvider {
         ok: false,
         error: {
           kind: "provider_error",
-          message: error instanceof Error ? error.message : String(error),
+          message: "provider request failed",
         },
       };
     }
@@ -143,8 +247,8 @@ export class OpenAiProvider implements LlmProvider {
       }
 
       if (!response.ok) {
-        const text = await response.text().catch(() => "");
-        lastError = `HTTP ${response.status}: ${text.slice(0, 300)}`;
+        await response.body?.cancel().catch(() => {});
+        lastError = `HTTP ${response.status}`;
         lastStatus = response.status;
         if (OPENAI_RETRYABLE.has(response.status)) continue;
         return {

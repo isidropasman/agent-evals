@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { listRuns } from "@/server/db";
+import { getDefaultWorkspace } from "@/server/workspace-store";
 
 function fmt(ts: number): string {
   return new Date(ts).toISOString().slice(0, 16).replace("T", " ");
@@ -8,7 +9,7 @@ function fmt(ts: number): string {
 export const dynamic = "force-dynamic";
 
 export default function RunsPage() {
-  const runs = listRuns();
+  const runs = listRuns(getDefaultWorkspace().id);
   return (
     <main className="content mx-auto max-w-5xl px-6 pb-32">
       <header className="flex items-center justify-between border-b py-5">
@@ -16,9 +17,10 @@ export default function RunsPage() {
           <span className="font-display text-xl font-900 tracking-tight">GAUNTLET</span>
           <span className="label">/ historial</span>
         </Link>
-        <Link href="/" className="label transition-colors hover:text-[var(--color-signal)]">
-          + nueva corrida
-        </Link>
+        <div className="flex gap-6">
+          <Link href="/dashboard" className="label transition-colors hover:text-[var(--color-signal)]">fleet ↗</Link>
+          <Link href="/" className="label transition-colors hover:text-[var(--color-signal)]">+ nueva corrida</Link>
+        </div>
       </header>
 
       <div className="mt-10 border" style={{ borderColor: "var(--color-line-bright)" }}>
@@ -55,7 +57,7 @@ export default function RunsPage() {
               className="h-2 w-2 shrink-0"
               style={{
                 background:
-                  r.status === "running"
+                  r.status === "queued" || r.status === "running"
                     ? "var(--color-warn)"
                     : r.status === "error"
                       ? "var(--color-fail)"
@@ -67,7 +69,7 @@ export default function RunsPage() {
             <span className="flex-1 truncate text-sm">{r.agentName}</span>
             <span className="label shrink-0 normal-case tracking-normal">{fmt(r.createdAt)}</span>
             <span className="w-16 shrink-0 text-right font-mono text-sm" style={{ color: "var(--color-ink-dim)" }}>
-              {r.report ? `${Math.round(r.report.score * 100)}` : r.status === "running" ? "···" : "—"}
+              {r.report ? `${Math.round(r.report.score * 100)}` : r.status === "queued" || r.status === "running" ? "···" : "—"}
             </span>
           </Link>
         ))}

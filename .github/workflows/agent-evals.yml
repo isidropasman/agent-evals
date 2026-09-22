@@ -1,0 +1,45 @@
+name: Agent eval gate
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  agent-eval:
+    name: regression gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GAUNTLET_URL: ${{ secrets.GAUNTLET_URL }}
+      GAUNTLET_API_KEY: ${{ secrets.GAUNTLET_API_KEY }}
+      GITHUB_SHA: ${{ github.sha }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run agent regression gate
+        run: pnpm gauntlet gate --output agent-eval-report.json
+
+      - name: Upload gate report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-eval-report
+          path: agent-eval-report.json
+          if-no-files-found: ignore

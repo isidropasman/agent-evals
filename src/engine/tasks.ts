@@ -2,6 +2,7 @@ import type { AgentConnection } from "./connector";
 import type { LlmProvider } from "./provider";
 import { extractJson } from "./json";
 import { runAgentTurn } from "./tool-loop";
+import { suiteGuidance } from "./suites";
 import type {
   AgentProfile,
   EngineResult,
@@ -94,6 +95,7 @@ ${agentSystemPrompt}
 Generá exactamente ${count} casos de prueba de categoría "${category}".
 Categoría: ${CATEGORY_GUIDANCE[category]}
 ${profileGuidance(profile, category)}
+${suiteGuidance(config.suite ?? "balanced", (profile?.toolsDetected?.length ?? 0) > 0)}
 
 Cada caso necesita:
 - title: etiqueta corta

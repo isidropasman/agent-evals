@@ -1,5 +1,6 @@
 import type { LlmProvider } from "./provider";
 import { extractJson } from "./json";
+import { suiteGuidance } from "./suites";
 import type {
   AgentProfile,
   EngineResult,
@@ -139,7 +140,7 @@ ${profileGuidance(profile, category)}${
       category === "adversarial"
         ? attackCoverage(count, (profile?.toolsDetected.length ?? 0) > 0)
         : ""
-    }
+    }${suiteGuidance(config.suite ?? "balanced", (profile?.toolsDetected?.length ?? 0) > 0)}
 
 Each scenario needs:
 - title: a short label

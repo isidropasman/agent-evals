@@ -4,3 +4,6 @@ data/
 *.tsbuildinfo
 next-env.d.ts
 .env*
+.gstack/
+.vercel
+.inngest/

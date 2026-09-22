@@ -42,7 +42,7 @@ export function Button({
   type?: "button" | "submit";
 }) {
   const base =
-    "relative inline-flex items-center gap-2 px-5 py-3 text-sm font-semibold uppercase tracking-widest transition-all disabled:opacity-40 disabled:cursor-not-allowed";
+    "relative inline-flex items-center gap-2 px-5 py-3 text-sm font-semibold uppercase tracking-widest transition-all focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-signal)] disabled:cursor-not-allowed disabled:opacity-40";
   const styles =
     variant === "primary"
       ? "bg-[var(--color-signal)] text-[var(--color-void)] hover:brightness-110 hover:-translate-y-px"

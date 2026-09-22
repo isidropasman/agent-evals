@@ -119,12 +119,12 @@ async function postToAgent(
       redirect: "manual", // don't follow redirects into blocked ranges
       signal: AbortSignal.timeout(60_000),
     });
-  } catch (error) {
+  } catch {
     return {
       ok: false,
       error: {
         kind: "connector_unreachable",
-        message: `Could not reach agent at ${conn.endpointUrl}: ${error instanceof Error ? error.message : String(error)}`,
+        message: "Could not reach agent endpoint",
       },
     };
   }
@@ -141,12 +141,12 @@ async function postToAgent(
   }
 
   if (!response.ok) {
-    const text = await response.text().catch(() => "");
+    await response.body?.cancel().catch(() => {});
     return {
       ok: false,
       error: {
         kind: "connector_bad_response",
-        message: `Agent returned HTTP ${response.status}: ${text.slice(0, 300)}`,
+        message: `Agent returned HTTP ${response.status}`,
       },
     };
   }
